@@ -1,12 +1,8 @@
 """
 ╔══════════════════════════════════════════════════════╗
 ║   Hard Hat Detection — Streamlit App                 ║
-║   YOLOv8 | 3 Trang | Đủ yêu cầu đồ án              ║
+║   YOLOv8 | 3 Trang | Đủ yêu cầu đồ án                ║
 ╚══════════════════════════════════════════════════════╝
-Cấu trúc:
-  Trang 1 — Giới thiệu & EDA
-  Trang 2 — Demo phát hiện (Upload ảnh / Webcam)
-  Trang 3 — Đánh giá & Hiệu năng
 """
 
 import streamlit as st
@@ -24,17 +20,19 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import io
 
+# Xử lý import gdown an toàn hơn
 try:
     import gdown
-except:
-    pass
+    HAS_GDOWN = True
+except ImportError:
+    HAS_GDOWN = False
 
 # ── Thông tin sinh viên ──────────────────────────────
 STUDENT_INFO = {
     "Tên đề tài":  "Phát hiện mũ bảo hộ trong công trường bằng YOLOv8 nhằm giám sát tuân thủ an toàn lao động",
-    "Họ tên SV":   "Đỗ Văn Sinh",        # ← đổi tên của bạn
-    "MSSV":        "22T1020733",             # ← đổi MSSV
-    "GVHD":        "Lê Quang Chiến",                  # ← đổi tên GV
+    "Họ tên SV":   "Đỗ Văn Sinh",        # ← tên của bạn
+    "MSSV":        "22T1020733",         # ← MSSV
+    "GVHD":        "Lê Quang Chiến",    # ← tên GV
 }
 
 CLASSES      = ["helmet", "head", "person"]
@@ -43,7 +41,10 @@ CLASS_COLORS = {
     "head":   "#f44336",   # đỏ (vi phạm)
     "person": "#ff9800",   # cam
 }
-MODEL_PATH = "models/best.pt"
+
+# [SỬA] Dùng pathlib để tạo đường dẫn tuyệt đối, tránh lỗi khi deploy lên Cloud
+BASE_DIR = Path(__file__).parent
+MODEL_PATH = BASE_DIR / "models" / "best.pt"
 
 # ════════════════════════════════════════════════════
 #  PAGE CONFIG & GLOBAL CSS
@@ -117,22 +118,25 @@ div[data-testid="metric-container"] {
 #  CACHE: LOAD MODEL FROM GITHUB
 # ════════════════════════════════════════════════════
 def download_model_from_github():
-    """Download best.pt từ Google Drive (GitHub có bandwidth limit)."""
-    if os.path.exists(MODEL_PATH):
+    """Download best.pt từ Google Drive."""
+    if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1000000:
         return True
     
-    os.makedirs("models", exist_ok=True)
+    os.makedirs(MODEL_PATH.parent, exist_ok=True)
     
     try:
-        # Dùng Google Drive thay vì GitHub (tránh bandwidth limit)
-        st.info("⏳ Đang download model từ Google Drive (~5.96 MB)...")
-        
+        if not HAS_GDOWN:
+            st.warning("❌ Không tìm thấy thư viện `gdown`. Hãy thêm vào requirements.txt")
+            return False
+
+        st.info("⏳ File mô hình chưa có sẵn, đang download từ Google Drive (~5.96 MB)...")
         DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
         url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}"
         
-        gdown.download(url, MODEL_PATH, quiet=False)
+        # [SỬA] Gdown cần đường dẫn string
+        gdown.download(url, str(MODEL_PATH), quiet=False)
         
-        if os.path.exists(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 1000000:  # > 1MB
+        if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1000000:
             st.success("✅ Download thành công!")
             return True
         else:
@@ -146,43 +150,38 @@ def download_model_from_github():
 
 @st.cache_resource
 def load_model():
-    """Load YOLOv8 model từ GitHub. Headless mode cho Streamlit Cloud."""
+    """Load YOLOv8 model. Headless mode cho Streamlit Cloud."""
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     os.environ['DISPLAY'] = ''
     
-    if not os.path.exists(MODEL_PATH):
-        st.warning("⏳ Model chưa có, đang tải từ GitHub...")
+    # [SỬA] Ưu tiên check file local trước (vì bạn đã có sẵn models/best.pt trên Github)
+    if not MODEL_PATH.exists() or MODEL_PATH.stat().st_size < 1000000:
         model_exists = download_model_from_github()
     else:
         model_exists = True
     
     if not model_exists:
-        st.warning("⚠️ Không thể tải model. Đang chạy chế độ **Demo Mock**.")
         return None
     
     try:
         from ultralytics import YOLO
-        model = YOLO(MODEL_PATH)
+        # [SỬA] Load model
+        model = YOLO(str(MODEL_PATH))
         return model
     except Exception as e:
         error_msg = str(e)
-        if "libGL" in error_msg or "OpenGL" in error_msg:
-            st.warning("⚠️ Lỗi OpenGL (headless). Chạy **Demo Mock**.")
-        else:
-            st.warning(f"❌ Lỗi load model: {error_msg}")
+        st.warning(f"❌ Lỗi load model: {error_msg}")
         return None
 
 
 @st.cache_data
 def load_eda_stats():
     """Trả về thống kê giả lập (thay bằng số liệu thực sau khi train)."""
-    # ── Số lượng mỗi class trong dataset ──────────────
     class_counts = {
         "train": {"helmet": 17840, "head": 4621, "person": 11273},
         "val":   {"helmet": 3342,  "head":  867, "person":  2113},
         "test":  {"helmet": 1654,  "head":  430, "person":  1046},
     }
-    # ── Metrics sau khi train ──────────────────────────
     metrics = {
         "mAP50":      0.887,
         "mAP50-95":   0.612,
@@ -194,18 +193,16 @@ def load_eda_stats():
             "person": {"AP50": 0.915, "AP": 0.618},
         }
     }
-    # ── Loss theo epoch (giả lập) ──────────────────────
     epochs = list(range(1, 51))
     np.random.seed(42)
     train_loss = [1.8 * np.exp(-0.07*e) + 0.18 + np.random.normal(0, 0.02) for e in epochs]
     val_loss   = [1.9 * np.exp(-0.065*e) + 0.22 + np.random.normal(0, 0.025) for e in epochs]
     map50_hist = [min(0.887, 0.3 + 0.012*e + np.random.normal(0, 0.01)) for e in epochs]
 
-    # ── Confusion matrix ───────────────────────────────
     cm = np.array([
-        [938,  41,  21],   # helmet
-        [58,  342,  30],   # head
-        [18,   22, 406],   # person
+        [938,  41,  21],
+        [58,  342,  30],
+        [18,   22, 406],
     ])
     return class_counts, metrics, epochs, train_loss, val_loss, map50_hist, cm
 
@@ -232,7 +229,8 @@ def mock_detect(image: np.ndarray):
 
 def real_detect(model, image: np.ndarray, conf_thresh: float):
     """Chạy inference thực với YOLOv8."""
-    results = model.predict(image, conf=conf_thresh, verbose=False)
+    # [SỬA] Thêm device='cpu' để chắc chắn không văng lỗi trên Streamlit Free Tier
+    results = model.predict(image, conf=conf_thresh, verbose=False, device='cpu')
     boxes = []
     for box in results[0].boxes:
         cls_id = int(box.cls)
@@ -246,7 +244,7 @@ def real_detect(model, image: np.ndarray, conf_thresh: float):
 
 
 def draw_detections(image: np.ndarray, boxes: list) -> Image.Image:
-    """Vẽ bounding box bằng PIL (không dùng cv2 - tránh lỗi OpenGL)."""
+    """Vẽ bounding box bằng PIL."""
     pil_img = Image.fromarray(image)
     draw = ImageDraw.Draw(pil_img)
     color_map = {
@@ -259,9 +257,7 @@ def draw_detections(image: np.ndarray, boxes: list) -> Image.Image:
         name = det["name"]
         conf = det["conf"]
         c = color_map.get(name, (200, 200, 200))
-        # Vẽ box
         draw.rectangle([x1, y1, x2, y2], outline=c, width=3)
-        # Label background & text
         label = f"{name} {conf:.2f}"
         tw = len(label) * 7
         th = 16
@@ -286,16 +282,11 @@ def check_violation(boxes: list) -> bool:
         
         for hm in helmets:
             mx1, my1, mx2, my2 = hm["box"]
-            
-            # Tính vùng giao nhau
             ix = max(0, min(hx2, mx2) - max(hx1, mx1))
             iy = max(0, min(hy2, my2) - max(hy1, my1))
             inter_area = ix * iy
             
-            # Helmet phải nằm PHÍA TRÊN đầu (my1 < hy1 + 1/3 chiều cao đầu)
             helmet_above = my1 < hy1 + (hy2 - hy1) * 0.35
-            
-            # Overlap phải đủ lớn (>= 20% diện tích đầu)
             overlap_ratio = inter_area / hd_area if hd_area > 0 else 0
             
             if helmet_above and overlap_ratio >= 0.20:
@@ -304,7 +295,6 @@ def check_violation(boxes: list) -> bool:
         
         if not covered:
             return True
-    
     return False
 
 # ════════════════════════════════════════════════════
@@ -325,12 +315,11 @@ with st.sidebar:
         st.markdown(f"<small>**{k}:** {v}</small>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # Trạng thái model
     model = load_model()
     if model:
         st.success("✅ Model đã load")
     else:
-        st.warning("⚠️ Chưa có best.pt\nĐang chạy chế độ **demo mock**")
+        st.warning("⚠️ Chưa load được best.pt\nĐang chạy chế độ **demo mock**")
 
 
 # ════════════════════════════════════════════════════
@@ -339,7 +328,6 @@ with st.sidebar:
 if page.startswith("📊"):
     st.title("📊 Giới thiệu & Khám phá Dữ liệu")
 
-    # ── Thông tin sinh viên ──────────────────────────
     with st.container():
         cols = st.columns(len(STUDENT_INFO))
         for col, (k, v) in zip(cols, STUDENT_INFO.items()):
@@ -347,7 +335,6 @@ if page.startswith("📊"):
 
     st.markdown("---")
 
-    # ── Mô tả bài toán ──────────────────────────────
     st.markdown('<p class="section-title">🎯 Giá trị thực tiễn</p>', unsafe_allow_html=True)
     st.markdown("""
     > Tai nạn lao động do không đội mũ bảo hộ là một trong những nguyên nhân chính gây
@@ -363,7 +350,6 @@ if page.startswith("📊"):
 
     st.markdown("---")
 
-    # ── Dataset info ─────────────────────────────────
     st.markdown('<p class="section-title">📦 Thông tin Dataset</p>', unsafe_allow_html=True)
     info_cols = st.columns(4)
     info_cols[0].metric("Nguồn", "Kaggle")
@@ -377,7 +363,6 @@ if page.startswith("📊"):
     - **Tiền xử lý:** Convert VOC XML → YOLO TXT, resize 640×640
     """)
 
-    # ── Biểu đồ 1: phân phối class ───────────────────
     st.markdown("---")
     st.markdown('<p class="section-title">📊 Phân phối nhãn theo tập</p>', unsafe_allow_html=True)
 
@@ -411,7 +396,6 @@ if page.startswith("📊"):
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Biểu đồ 2: phân phối tổng (pie) ─────────────
     st.markdown("---")
     st.markdown('<p class="section-title">🥧 Tỷ lệ nhãn toàn dataset</p>', unsafe_allow_html=True)
 
@@ -458,13 +442,11 @@ elif page.startswith("🔍"):
     if not model:
         st.markdown("""
         <div class="alert-warning">
-        ⚠️ <b>Chế độ Demo Mock</b> — Chưa tìm thấy <code>models/best.pt</code>.
+        ⚠️ <b>Chế độ Demo Mock</b> — Chưa tìm thấy hoặc chưa load được <code>models/best.pt</code>.
         Kết quả hiển thị là <b>ngẫu nhiên giả lập</b> để test giao diện.
-        Sau khi train xong, đặt file <code>best.pt</code> vào thư mục <code>models/</code> và restart app.
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Cài đặt ──────────────────────────────────────
     with st.sidebar:
         st.markdown("### ⚙️ Cài đặt")
         conf_thresh = st.slider("Ngưỡng Confidence", 0.1, 0.9, 0.45, 0.05)
@@ -472,11 +454,10 @@ elif page.startswith("🔍"):
 
     tab_upload, tab_webcam = st.tabs(["📤 Upload Ảnh / Video", "📷 Webcam"])
 
-    # ── Tab Upload ────────────────────────────────────
     with tab_upload:
         st.markdown("#### Tải ảnh hoặc video lên để phân tích")
         uploaded = st.file_uploader(
-            "Chọn file ảnh (jpg/png) hoặc video (mp4/avi)",
+            "Chọn file ảnh (jpg/png)",
             type=["jpg", "jpeg", "png", "mp4", "avi", "mov"],
         )
 
@@ -484,7 +465,6 @@ elif page.startswith("🔍"):
             is_video = uploaded.type.startswith("video")
 
             if not is_video:
-                # ── Xử lý ảnh (PIL - không dùng cv2) ──────────────
                 pil_img = Image.open(uploaded).convert("RGB")
                 img_array = np.array(pil_img)
 
@@ -504,7 +484,6 @@ elif page.startswith("🔍"):
                     st.markdown("**Kết quả phát hiện**")
                     st.image(result_pil, use_container_width=True)
 
-                # ── Thống kê ──────────────────────────
                 st.markdown("---")
                 mc = st.columns(4)
                 mc[0].metric("⏱️ Thời gian", f"{elapsed*1000:.0f} ms")
@@ -525,7 +504,6 @@ elif page.startswith("🔍"):
                     </div>
                     """, unsafe_allow_html=True)
 
-                # ── Chi tiết từng box ─────────────────
                 if boxes:
                     st.markdown("**Chi tiết phát hiện:**")
                     df_boxes = pd.DataFrame(boxes)[["name","conf","box"]]
@@ -534,10 +512,8 @@ elif page.startswith("🔍"):
                     st.dataframe(df_boxes, use_container_width=True)
 
             else:
-                # Video không hỗ trợ trên Streamlit Cloud (dùng cv2)
                 st.warning("⚠️ Video processing không hỗ trợ trên Streamlit Cloud. Vui lòng upload ảnh thay vì video.")
 
-    # ── Tab Webcam ────────────────────────────────────
     with tab_webcam:
         st.markdown("#### Chụp ảnh từ webcam để phân tích")
         st.markdown("""
@@ -593,7 +569,6 @@ elif page.startswith("📈"):
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Metrics tổng quan ─────────────────────────────
     st.markdown('<p class="section-title">🏆 Chỉ số tổng quan (Test set)</p>', unsafe_allow_html=True)
     m_cols = st.columns(4)
     m_cols[0].metric("mAP@50",    f"{metrics['mAP50']:.3f}",    "↑ tốt")
@@ -603,7 +578,6 @@ elif page.startswith("📈"):
 
     st.markdown("---")
 
-    # ── Per-class AP ──────────────────────────────────
     st.markdown('<p class="section-title">📊 AP theo từng class</p>', unsafe_allow_html=True)
 
     pc = metrics["per_class"]
@@ -628,7 +602,6 @@ elif page.startswith("📈"):
 
     st.markdown("---")
 
-    # ── Loss & mAP50 history ──────────────────────────
     st.markdown('<p class="section-title">📉 Quá trình huấn luyện (Loss & mAP@50)</p>', unsafe_allow_html=True)
 
     fig_hist, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4), facecolor="#0d1117")
@@ -654,7 +627,6 @@ elif page.startswith("📈"):
 
     st.markdown("---")
 
-    # ── Confusion Matrix ──────────────────────────────
     st.markdown('<p class="section-title">🔲 Ma trận nhầm lẫn (Test set)</p>', unsafe_allow_html=True)
 
     col_cm, col_analysis = st.columns([1, 1])
@@ -705,7 +677,6 @@ elif page.startswith("📈"):
 
     st.markdown("---")
 
-    # ── Model info ────────────────────────────────────
     st.markdown('<p class="section-title">⚙️ Thông số mô hình</p>', unsafe_allow_html=True)
     model_cols = st.columns(4)
     model_cols[0].metric("Architecture", "YOLOv8n")
