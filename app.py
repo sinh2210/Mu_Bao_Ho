@@ -61,12 +61,42 @@ div[data-testid="metric-container"] {
 
 
 # ════════════════════════════════════════════════════
-#  CACHE
+#  CACHE & DOWNLOAD
 # ════════════════════════════════════════════════════
+def download_model_from_drive():
+    """Download best.pt từ Google Drive nếu chưa có."""
+    if os.path.exists(MODEL_PATH):
+        return True
+    
+    os.makedirs("models", exist_ok=True)
+    
+    # Google Drive File ID của best.pt
+    DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
+    
+    try:
+        import gdown
+        st.info("⏳ Đang download model từ Google Drive...")
+        url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}"
+        gdown.download(url, MODEL_PATH, quiet=False)
+        st.success("✅ Download thành công!")
+        return True
+    except Exception as e:
+        st.warning(f"❌ Lỗi download: {e}")
+        return False
+
+
 @st.cache_resource
 def load_model():
+    """Load YOLOv8 model. Tự động download từ Google Drive nếu cần."""
+    # Thử download từ Google Drive nếu chưa có
     if not os.path.exists(MODEL_PATH):
+        model_exists = download_model_from_drive()
+    else:
+        model_exists = True
+    
+    if not model_exists:
         return None
+    
     try:
         from ultralytics import YOLO
         return YOLO(MODEL_PATH)
