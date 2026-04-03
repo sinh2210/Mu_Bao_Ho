@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════╗
-║   Hard Hat Detection — Streamlit App                 ║
-║   YOLOv8 | 3 Trang | Đủ yêu cầu đồ án                ║
-╚══════════════════════════════════════════════════════╝
-"""
-
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -47,9 +40,7 @@ CLASS_COLORS = {
 BASE_DIR = Path(__file__).parent
 MODEL_PATH = BASE_DIR / "models" / "best.pt"
 
-# ════════════════════════════════════════════════════
 #  PAGE CONFIG & GLOBAL CSS
-# ════════════════════════════════════════════════════
 st.set_page_config(
     page_title="Hard Hat Detection",
     page_icon="🪖",
@@ -114,10 +105,7 @@ div[data-testid="metric-container"] {
 </style>
 """, unsafe_allow_html=True)
 
-
-# ════════════════════════════════════════════════════
 #  CACHE: LOAD MODEL FROM GITHUB
-# ════════════════════════════════════════════════════
 def download_model_from_github():
     """
     Download best.pt từ Google Drive.
@@ -356,9 +344,7 @@ def check_violation(boxes: list) -> bool:
             return True
     return False
 
-# ════════════════════════════════════════════════════
 #  SIDEBAR NAVIGATION
-# ════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("## 🪖 Hard Hat Detection")
     st.markdown("---")
@@ -381,7 +367,6 @@ with st.sidebar:
         st.warning("⚠️ Chưa load được best.pt\nĐang chạy chế độ **demo mock**")
 
 
-# ════════════════════════════════════════════════════
 #  TRANG 1 — GIỚI THIỆU & EDA
 # ════════════════════════════════════════════════════
 if page.startswith("📊"):
@@ -404,7 +389,7 @@ if page.startswith("📊"):
     1. Camera giám sát → frame ảnh/video
     2. YOLOv8 phát hiện 3 lớp: `helmet`, `head`, `person`
     3. So sánh vị trí `head` ↔ `helmet` → xác định vi phạm
-    4. Cảnh báo trực quan + âm thanh
+    4. Cảnh báo trực quan
     """)
 
     st.markdown("---")
@@ -492,7 +477,6 @@ if page.startswith("📊"):
         """)
 
 
-# ════════════════════════════════════════════════════
 #  TRANG 2 — DEMO PHÁT HIỆN
 # ════════════════════════════════════════════════════
 elif page.startswith("🔍"):
