@@ -24,6 +24,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import io
 
+try:
+    import gdown
+except:
+    pass
+
 # ── Thông tin sinh viên ──────────────────────────────
 STUDENT_INFO = {
     "Tên đề tài":  "Phát hiện mũ bảo hộ trong công trường bằng YOLOv8 nhằm giám sát tuân thủ an toàn lao động",
@@ -112,24 +117,26 @@ div[data-testid="metric-container"] {
 #  CACHE: LOAD MODEL FROM GITHUB
 # ════════════════════════════════════════════════════
 def download_model_from_github():
-    """Download best.pt từ GitHub nếu chưa có."""
+    """Download best.pt từ Google Drive (GitHub có bandwidth limit)."""
     if os.path.exists(MODEL_PATH):
         return True
     
     os.makedirs("models", exist_ok=True)
     
     try:
-        st.info("⏳ Đang download model từ GitHub (~100MB)...")
+        # Dùng Google Drive thay vì GitHub (tránh bandwidth limit)
+        st.info("⏳ Đang download model từ Google Drive (~5.96 MB)...")
         
-        # Raw GitHub URL
-        url = "https://raw.githubusercontent.com/sinh2210/Mu_Bao_Ho/main/models/best.pt"
-        urllib.request.urlretrieve(url, MODEL_PATH)
+        DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
+        url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}"
         
-        if os.path.exists(MODEL_PATH):
+        gdown.download(url, MODEL_PATH, quiet=False)
+        
+        if os.path.exists(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 1000000:  # > 1MB
             st.success("✅ Download thành công!")
             return True
         else:
-            st.warning("❌ Download thất bại: file không tạo được")
+            st.warning("❌ Download thất bại hoặc file quá nhỏ")
             return False
             
     except Exception as e:
