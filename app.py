@@ -4,13 +4,16 @@ YOLOv8 | 3 Trang | Không dùng cv2 (tương thích Streamlit Cloud)
 """
 
 import os
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'  # Headless mode
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 os.environ['DISPLAY'] = ''
+os.environ['MPLBACKEND'] = 'Agg'
 
 import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
 import seaborn as sns
 import time
 import random
@@ -33,10 +36,6 @@ MODEL_PATH   = "models/best.pt"
 # ════════════════════════════════════════════════════
 #  PAGE CONFIG & CSS
 # ════════════════════════════════════════════════════
-# Fix matplotlib backend for headless environments
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
-
 st.set_page_config(page_title="Hard Hat Detection", page_icon="🪖",
                    layout="wide", initial_sidebar_state="expanded")
 
@@ -81,7 +80,6 @@ def download_model_from_drive():
         import gdown
         st.info("⏳ Đang download model từ Google Drive (~100MB, chờ chút)...")
         
-        # Google Drive File ID của best.pt
         DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
         url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}"
         
@@ -95,7 +93,7 @@ def download_model_from_drive():
             return False
             
     except ImportError:
-        st.error("❌ gdown chưa cài đặt. Cần cập nhật requirements.txt")
+        st.error("❌ gdown chưa cài đặt. Cập nhật requirements.txt")
         return False
     except Exception as e:
         st.warning(f"❌ Lỗi download: {str(e)}")
@@ -105,7 +103,6 @@ def download_model_from_drive():
 @st.cache_resource
 def load_model():
     """Load YOLOv8 model. Tự động download từ Google Drive nếu cần."""
-    # Thử download từ Google Drive nếu chưa có
     if not os.path.exists(MODEL_PATH):
         st.warning("⏳ Model chưa có, đang tải từ Google Drive...")
         model_exists = download_model_from_drive()
@@ -117,20 +114,13 @@ def load_model():
         return None
     
     try:
-        # Set OpenGL to headless mode
-        os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-        os.environ['DISPLAY'] = ''
-        
         from ultralytics import YOLO
         model = YOLO(MODEL_PATH)
         return model
         
-    except ImportError as e:
-        st.error(f"❌ Lỗi: ultralytics chưa cài đặt - {e}")
-        return None
     except Exception as e:
         error_msg = str(e)
-        if "libGL" in error_msg:
+        if "libGL" in error_msg or "OpenGL" in error_msg:
             st.warning("⚠️ Lỗi OpenGL (headless environment). Đang chạy **Demo Mock**.")
         else:
             st.warning(f"❌ Lỗi load model: {error_msg}")
@@ -213,9 +203,7 @@ def draw_detections(pil_img: Image.Image, boxes: list) -> Image.Image:
         name = det["name"]
         conf = det["conf"]
         c = color_map.get(name, (200,200,200))
-        # Box
         draw.rectangle([x1, y1, x2, y2], outline=c, width=3)
-        # Label background
         label = f"{name} {conf:.2f}"
         tw = len(label) * 7
         th = 16
@@ -260,7 +248,6 @@ with st.sidebar:
         st.markdown(f"<small>**{k}:** {v}</small>", unsafe_allow_html=True)
     st.markdown("---")
     
-    # Load model with status indicator
     model_status = st.empty()
     with model_status:
         with st.spinner("⏳ Đang kiểm tra model..."):
@@ -278,7 +265,6 @@ with st.sidebar:
 if "Trang 1" in page:
     st.title("📊 Giới thiệu & Khám phá Dữ liệu")
 
-    # Thông tin sinh viên
     st.markdown("""<div style="background:#161b27;border:1px solid #30363d;border-radius:12px;padding:20px 28px;margin-bottom:16px;">
     <table style="width:100%;border-collapse:collapse;"><tr>""" +
     "".join([f'<td style="padding:8px 16px;border-right:1px solid #30363d;vertical-align:top;"><div style="color:#8b949e;font-size:12px;margin-bottom:4px;">{k}</div><div style="color:#e6edf3;font-size:15px;font-weight:600;">{v}</div></td>'
@@ -345,7 +331,7 @@ elif "Trang 2" in page:
     st.title("🔍 Demo Phát hiện Mũ Bảo hộ")
 
     if not model:
-        st.markdown('<div class="alert-warning">⚠️ <b>Chế độ Demo Mock</b> — Chưa có <code>models/best.pt</code>. Kết quả là ngẫu nhiên giả lập.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="alert-warning">⚠️ <b>Chế độ Demo Mock</b> — Kết quả là ngẫu nhiên giả lập.</div>', unsafe_allow_html=True)
 
     with st.sidebar:
         st.markdown("### ⚙️ Cài đặt")
@@ -353,7 +339,6 @@ elif "Trang 2" in page:
 
     tab_upload, tab_webcam = st.tabs(["📤 Upload Ảnh / Video", "📷 Webcam"])
 
-    # ── Tab Upload ────────────────────────────────────
     with tab_upload:
         st.markdown("#### Tải ảnh hoặc video lên để phân tích")
         uploaded = st.file_uploader("Chọn file ảnh (jpg/png) hoặc video (mp4/avi)",
@@ -362,7 +347,6 @@ elif "Trang 2" in page:
             is_video = uploaded.type.startswith("video")
 
             if not is_video:
-                # Ảnh
                 pil_img = bytes_to_pil(uploaded.read())
                 img_arr = pil_to_numpy(pil_img)
                 w, h    = pil_img.size
@@ -399,7 +383,6 @@ elif "Trang 2" in page:
                     st.dataframe(df, use_container_width=True)
 
             else:
-                # Video — dùng imageio thay cv2
                 st.info("Đang xử lý video... (hiển thị tối đa 60 frame)")
                 tfile = f"/tmp/upload_{uploaded.name}"
                 with open(tfile, "wb") as f: f.write(uploaded.read())
@@ -431,7 +414,6 @@ elif "Trang 2" in page:
                 except Exception as e:
                     st.error(f"Lỗi xử lý video: {e}\n\nHãy thử upload ảnh thay vì video.")
 
-    # ── Tab Webcam ────────────────────────────────────
     with tab_webcam:
         st.markdown("#### Chụp ảnh từ webcam để phân tích")
         cam_img = st.camera_input("📷 Nhấn nút để chụp ảnh")
