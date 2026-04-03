@@ -3,12 +3,15 @@ Hard Hat Detection — Streamlit App
 YOLOv8 | 3 Trang | Không dùng cv2 (tương thích Streamlit Cloud)
 """
 
+import os
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'  # Headless mode
+os.environ['DISPLAY'] = ''
+
 import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os
 import time
 import random
 from pathlib import Path
@@ -30,6 +33,10 @@ MODEL_PATH   = "models/best.pt"
 # ════════════════════════════════════════════════════
 #  PAGE CONFIG & CSS
 # ════════════════════════════════════════════════════
+# Fix matplotlib backend for headless environments
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+
 st.set_page_config(page_title="Hard Hat Detection", page_icon="🪖",
                    layout="wide", initial_sidebar_state="expanded")
 
@@ -70,18 +77,28 @@ def download_model_from_drive():
     
     os.makedirs("models", exist_ok=True)
     
-    # Google Drive File ID của best.pt
-    DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
-    
     try:
         import gdown
-        st.info("⏳ Đang download model từ Google Drive...")
+        st.info("⏳ Đang download model từ Google Drive (~100MB, chờ chút)...")
+        
+        # Google Drive File ID của best.pt
+        DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
         url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}"
+        
         gdown.download(url, MODEL_PATH, quiet=False)
-        st.success("✅ Download thành công!")
-        return True
+        
+        if os.path.exists(MODEL_PATH):
+            st.success("✅ Download thành công!")
+            return True
+        else:
+            st.warning("❌ Download thất bại: file không tạo được")
+            return False
+            
+    except ImportError:
+        st.error("❌ gdown chưa cài đặt. Cần cập nhật requirements.txt")
+        return False
     except Exception as e:
-        st.warning(f"❌ Lỗi download: {e}")
+        st.warning(f"❌ Lỗi download: {str(e)}")
         return False
 
 
@@ -90,18 +107,33 @@ def load_model():
     """Load YOLOv8 model. Tự động download từ Google Drive nếu cần."""
     # Thử download từ Google Drive nếu chưa có
     if not os.path.exists(MODEL_PATH):
+        st.warning("⏳ Model chưa có, đang tải từ Google Drive...")
         model_exists = download_model_from_drive()
     else:
         model_exists = True
     
     if not model_exists:
+        st.warning("⚠️ Không thể tải model. Đang chạy chế độ **Demo Mock**.")
         return None
     
     try:
+        # Set OpenGL to headless mode
+        os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+        os.environ['DISPLAY'] = ''
+        
         from ultralytics import YOLO
-        return YOLO(MODEL_PATH)
+        model = YOLO(MODEL_PATH)
+        return model
+        
+    except ImportError as e:
+        st.error(f"❌ Lỗi: ultralytics chưa cài đặt - {e}")
+        return None
     except Exception as e:
-        st.warning(f"Không load được model: {e}")
+        error_msg = str(e)
+        if "libGL" in error_msg:
+            st.warning("⚠️ Lỗi OpenGL (headless environment). Đang chạy **Demo Mock**.")
+        else:
+            st.warning(f"❌ Lỗi load model: {error_msg}")
         return None
 
 
@@ -227,11 +259,17 @@ with st.sidebar:
     for k, v in STUDENT_INFO.items():
         st.markdown(f"<small>**{k}:** {v}</small>", unsafe_allow_html=True)
     st.markdown("---")
-    model = load_model()
+    
+    # Load model with status indicator
+    model_status = st.empty()
+    with model_status:
+        with st.spinner("⏳ Đang kiểm tra model..."):
+            model = load_model()
+    
     if model:
-        st.success("✅ Model đã load")
+        st.success("✅ Model sẵn sàng")
     else:
-        st.warning("⚠️ Chưa có best.pt\nĐang chạy **demo mock**")
+        st.warning("⚠️ Chế độ Demo Mock\n(Không có model hoặc OpenGL)")
 
 
 # ════════════════════════════════════════════════════
