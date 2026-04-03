@@ -238,26 +238,29 @@ def real_detect(model, image: np.ndarray, conf_thresh: float):
     return boxes
 
 
-def draw_detections(image: np.ndarray, boxes: list) -> np.ndarray:
-    """Vẽ bounding box lên ảnh."""
-    img = image.copy()
+def draw_detections(image: np.ndarray, boxes: list) -> Image.Image:
+    """Vẽ bounding box bằng PIL (không dùng cv2 - tránh lỗi OpenGL)."""
+    pil_img = Image.fromarray(image)
+    draw = ImageDraw.Draw(pil_img)
     color_map = {
         "helmet": (0, 200, 80),
-        "head":   (60, 60, 244),
-        "person": (30, 160, 255),
+        "head":   (244, 60, 60),
+        "person": (255, 160, 30),
     }
     for det in boxes:
         x1, y1, x2, y2 = det["box"]
         name = det["name"]
         conf = det["conf"]
         c = color_map.get(name, (200, 200, 200))
-        cv2.rectangle(img, (x1, y1), (x2, y2), c, 2)
+        # Vẽ box
+        draw.rectangle([x1, y1, x2, y2], outline=c, width=3)
+        # Label background & text
         label = f"{name} {conf:.2f}"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-        cv2.rectangle(img, (x1, y1-th-8), (x1+tw+6, y1), c, -1)
-        cv2.putText(img, label, (x1+3, y1-4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 1)
-    return img
+        tw = len(label) * 7
+        th = 16
+        draw.rectangle([x1, y1-th-4, x1+tw+6, y1], fill=c)
+        draw.text((x1+3, y1-th-2), label, fill=(255,255,255))
+    return pil_img
 
 
 def check_violation(boxes: list) -> bool:
@@ -474,26 +477,25 @@ elif page.startswith("🔍"):
             is_video = uploaded.type.startswith("video")
 
             if not is_video:
-                # ── Xử lý ảnh ─────────────────────────
-                file_bytes = np.frombuffer(uploaded.read(), np.uint8)
-                image_bgr  = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                image_rgb  = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                # ── Xử lý ảnh (PIL - không dùng cv2) ──────────────
+                pil_img = Image.open(uploaded).convert("RGB")
+                img_array = np.array(pil_img)
 
                 with st.spinner("Đang phân tích..."):
                     t0 = time.time()
-                    boxes = real_detect(model, image_bgr, conf_thresh) if model else mock_detect(image_bgr)
+                    boxes = real_detect(model, img_array, conf_thresh) if model else mock_detect(img_array)
                     elapsed = time.time() - t0
 
-                result_img = draw_detections(image_rgb, boxes)
+                result_pil = draw_detections(img_array, boxes)
                 violation  = check_violation(boxes)
 
                 col_orig, col_result = st.columns(2)
                 with col_orig:
                     st.markdown("**Ảnh gốc**")
-                    st.image(image_rgb, use_container_width=True)
+                    st.image(pil_img, use_container_width=True)
                 with col_result:
                     st.markdown("**Kết quả phát hiện**")
-                    st.image(result_img, use_container_width=True)
+                    st.image(result_pil, use_container_width=True)
 
                 # ── Thống kê ──────────────────────────
                 st.markdown("---")
@@ -525,44 +527,8 @@ elif page.startswith("🔍"):
                     st.dataframe(df_boxes, use_container_width=True)
 
             else:
-                # ── Xử lý video (frame-by-frame) ──────
-                tfile = f"/tmp/upload_{uploaded.name}"
-                with open(tfile, "wb") as f:
-                    f.write(uploaded.read())
-
-                st.info("Đang xử lý video... (chỉ hiển thị 30 frame đầu để demo)")
-                cap = cv2.VideoCapture(tfile)
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                fps = cap.get(cv2.CAP_PROP_FPS) or 25
-
-                frame_placeholder = st.empty()
-                stat_placeholder  = st.empty()
-                progress = st.progress(0)
-
-                max_frames = min(total_frames, 90)
-                for i in range(max_frames):
-                    ok, frame = cap.read()
-                    if not ok: break
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    boxes = real_detect(model, frame, conf_thresh) if model else mock_detect(frame)
-                    result = draw_detections(frame_rgb, boxes)
-                    violation = check_violation(boxes)
-                    if violation:
-                        cv2.putText(result, "⚠ VI PHAM!", (10, result.shape[0]-20),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255,60,60), 3)
-                    frame_placeholder.image(result, use_container_width=True,
-                                            caption=f"Frame {i+1}/{max_frames}")
-                    stat_placeholder.markdown(
-                        f"🪖 {sum(1 for b in boxes if b['name']=='helmet')}  "
-                        f"👤 {sum(1 for b in boxes if b['name']=='head')}  "
-                        f"🧍 {sum(1 for b in boxes if b['name']=='person')}  "
-                        + ("🚨 **VI PHẠM**" if violation else "✅ OK")
-                    )
-                    progress.progress((i+1)/max_frames)
-                    time.sleep(1/fps)
-
-                cap.release()
-                st.success("✅ Xử lý video hoàn tất!")
+                # Video không hỗ trợ trên Streamlit Cloud (dùng cv2)
+                st.warning("⚠️ Video processing không hỗ trợ trên Streamlit Cloud. Vui lòng upload ảnh thay vì video.")
 
     # ── Tab Webcam ────────────────────────────────────
     with tab_webcam:
@@ -577,21 +543,20 @@ elif page.startswith("🔍"):
         cam_img = st.camera_input("📷 Nhấn nút để chụp ảnh")
 
         if cam_img:
-            file_bytes = np.frombuffer(cam_img.getvalue(), np.uint8)
-            image_bgr  = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            image_rgb  = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+            pil_img = Image.open(cam_img).convert("RGB")
+            img_array = np.array(pil_img)
 
             with st.spinner("Đang phân tích..."):
                 t0 = time.time()
-                boxes = real_detect(model, image_bgr, conf_thresh) if model else mock_detect(image_bgr)
+                boxes = real_detect(model, img_array, conf_thresh) if model else mock_detect(img_array)
                 elapsed = time.time() - t0
 
-            result_img = draw_detections(image_rgb, boxes)
+            result_pil = draw_detections(img_array, boxes)
             violation  = check_violation(boxes)
 
             col1, col2 = st.columns(2)
-            col1.image(image_rgb, caption="Ảnh chụp", use_container_width=True)
-            col2.image(result_img, caption="Kết quả", use_container_width=True)
+            col1.image(pil_img, caption="Ảnh chụp", use_container_width=True)
+            col2.image(result_pil, caption="Kết quả", use_container_width=True)
 
             mc = st.columns(4)
             mc[0].metric("⏱️ Thời gian", f"{elapsed*1000:.0f} ms")
