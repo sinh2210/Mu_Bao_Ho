@@ -15,6 +15,7 @@ import seaborn as sns
 import os
 import time
 import random
+import re
 import urllib.request
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
@@ -118,34 +119,92 @@ div[data-testid="metric-container"] {
 #  CACHE: LOAD MODEL FROM GITHUB
 # ════════════════════════════════════════════════════
 def download_model_from_github():
-    """Download best.pt từ Google Drive."""
-    if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1000000:
+    """
+    Download best.pt từ Google Drive.
+    Thử 3 phương pháp theo thứ tự để tránh bị chặn bởi xác nhận của GDrive.
+    """
+    if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1_000_000:
         return True
-    
-    os.makedirs(MODEL_PATH.parent, exist_ok=True)
-    
-    try:
-        if not HAS_GDOWN:
-            st.warning("❌ Không tìm thấy thư viện `gdown`. Hãy thêm vào requirements.txt")
-            return False
 
-        st.info("⏳ File mô hình chưa có sẵn, đang download từ Google Drive (~5.96 MB)...")
-        DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
-        url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}"
-        
-        # [SỬA] Gdown cần đường dẫn string
-        gdown.download(url, str(MODEL_PATH), quiet=False)
-        
-        if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1000000:
+    os.makedirs(MODEL_PATH.parent, exist_ok=True)
+    DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
+
+    # ── Phương pháp 1: gdown với id= và fuzzy=True (ổn định nhất) ──────────────
+    # Lý do: gdown.download(url, ...) dùng URL dạng uc?id=... hay bị Google chặn
+    # bằng trang xác nhận virus scan. Dùng id= trực tiếp + fuzzy=True sẽ tự xử lý.
+    if HAS_GDOWN:
+        try:
+            st.info("⏳ Đang download model từ Google Drive (~5.96 MB)...")
+            gdown.download(
+                id=DRIVE_FILE_ID,       # dùng id= thay vì URL
+                output=str(MODEL_PATH),
+                quiet=False,
+                fuzzy=True,             # tự xử lý redirect & xác nhận
+            )
+            if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1_000_000:
+                st.success("✅ Download thành công!")
+                return True
+            else:
+                st.warning("⚠️ gdown tải xong nhưng file không hợp lệ, thử cách khác...")
+        except Exception as e:
+            st.warning(f"⚠️ gdown thất bại ({e}), thử cách khác...")
+    else:
+        st.warning("❌ Không tìm thấy thư viện `gdown`. Hãy thêm vào requirements.txt")
+
+    # ── Phương pháp 2: requests session (xử lý cookie xác nhận của GDrive) ────
+    # Lý do: Google Drive trả về cookie/token xác nhận, cần lấy token rồi gọi lại
+    try:
+        import requests
+        st.info("⏳ Đang thử tải bằng requests session...")
+        session = requests.Session()
+
+        url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}&export=download"
+        resp = session.get(url, stream=True, timeout=60)
+
+        # Tìm token xác nhận trong cookie
+        token = None
+        for k, v in resp.cookies.items():
+            if k.startswith("download_warning"):
+                token = v
+                break
+
+        # Fallback: tìm token trong nội dung HTML
+        if token is None:
+            match = re.search(r'confirm=([0-9A-Za-z_\-]+)', resp.text)
+            if match:
+                token = match.group(1)
+
+        # Tải lại với token xác nhận
+        if token:
+            url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}&export=download&confirm={token}"
+            resp = session.get(url, stream=True, timeout=120)
+
+        with open(MODEL_PATH, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=32768):
+                if chunk:
+                    f.write(chunk)
+
+        if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1_000_000:
             st.success("✅ Download thành công!")
             return True
         else:
-            st.warning("❌ Download thất bại hoặc file quá nhỏ")
-            return False
-            
+            st.warning("⚠️ requests tải xong nhưng file không hợp lệ.")
     except Exception as e:
-        st.warning(f"❌ Lỗi download: {str(e)}")
-        return False
+        st.warning(f"⚠️ requests thất bại: {e}")
+
+    # ── Phương pháp 3: urllib đơn giản (fallback cuối) ────────────────────────
+    try:
+        st.info("⏳ Thử tải bằng urllib (fallback cuối)...")
+        url = f"https://drive.google.com/uc?export=download&id={DRIVE_FILE_ID}&confirm=t"
+        urllib.request.urlretrieve(url, str(MODEL_PATH))
+        if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1_000_000:
+            st.success("✅ Download thành công!")
+            return True
+    except Exception as e:
+        st.warning(f"⚠️ urllib thất bại: {e}")
+
+    st.error("❌ Không thể tải model. Đang chạy ở chế độ **Demo Mock**.")
+    return False
 
 
 @st.cache_resource
