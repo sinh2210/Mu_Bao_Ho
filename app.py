@@ -24,23 +24,21 @@ except ImportError:
 # ── Thông tin sinh viên ──────────────────────────────
 STUDENT_INFO = {
     "Tên đề tài":  "Phát hiện mũ bảo hộ trong công trường bằng YOLOv8 nhằm giám sát tuân thủ an toàn lao động",
-    "Họ tên SV":   "Đỗ Văn Sinh",        # ← tên của bạn
-    "MSSV":        "22T1020733",         # ← MSSV
-    "GVHD":        "Lê Quang Chiến",    # ← tên GV
+    "Họ tên SV":   "Đỗ Văn Sinh",
+    "MSSV":        "22T1020733",
+    "GVHD":        "Lê Quang Chiến",
 }
 
 CLASSES      = ["helmet", "head", "person"]
 CLASS_COLORS = {
-    "helmet": "#00c853",   # xanh lá
-    "head":   "#f44336",   # đỏ (vi phạm)
-    "person": "#ff9800",   # cam
+    "helmet": "#00c853",
+    "head":   "#f44336",
+    "person": "#ff9800",
 }
 
-# [SỬA] Dùng pathlib để tạo đường dẫn tuyệt đối, tránh lỗi khi deploy lên Cloud
 BASE_DIR = Path(__file__).parent
 MODEL_PATH = BASE_DIR / "models" / "best.pt"
 
-#  PAGE CONFIG & GLOBAL CSS
 st.set_page_config(
     page_title="Hard Hat Detection",
     page_icon="🪖",
@@ -55,7 +53,6 @@ st.markdown("""
 html, body, [class*="css"] { font-family: 'Noto Sans', sans-serif; }
 h1,h2,h3 { font-family: 'Rajdhani', sans-serif !important; letter-spacing:.5px; }
 
-/* Sidebar */
 section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0d1117 0%, #161b27 100%);
     border-right: 1px solid #30363d;
@@ -63,7 +60,6 @@ section[data-testid="stSidebar"] {
 section[data-testid="stSidebar"] * { color: #e6edf3 !important; }
 section[data-testid="stSidebar"] .stRadio label { font-size: 15px !important; }
 
-/* Metric cards */
 div[data-testid="metric-container"] {
     background: #161b27;
     border: 1px solid #30363d;
@@ -71,7 +67,6 @@ div[data-testid="metric-container"] {
     padding: 14px 18px;
 }
 
-/* Alert boxes */
 .alert-warning {
     background: #3d2a00; border-left: 4px solid #f59e0b;
     padding: 12px 16px; border-radius: 6px; margin: 8px 0;
@@ -85,7 +80,6 @@ div[data-testid="metric-container"] {
     padding: 12px 16px; border-radius: 6px; margin: 8px 0;
 }
 
-/* Section title */
 .section-title {
     font-family: 'Rajdhani', sans-serif;
     font-size: 22px; font-weight: 700;
@@ -94,7 +88,6 @@ div[data-testid="metric-container"] {
     color: #f59e0b;
 }
 
-/* Badge */
 .badge {
     display:inline-block; padding:3px 10px; border-radius:20px;
     font-size:12px; font-weight:600; margin:2px;
@@ -105,30 +98,20 @@ div[data-testid="metric-container"] {
 </style>
 """, unsafe_allow_html=True)
 
-#  CACHE: LOAD MODEL FROM GITHUB
+# ════════════════════════════════════════════════════
+#  DOWNLOAD & LOAD MODEL
+# ════════════════════════════════════════════════════
 def download_model_from_github():
-    """
-    Download best.pt từ Google Drive.
-    Thử 3 phương pháp theo thứ tự để tránh bị chặn bởi xác nhận của GDrive.
-    """
     if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1_000_000:
         return True
 
     os.makedirs(MODEL_PATH.parent, exist_ok=True)
     DRIVE_FILE_ID = "1LStYo4smortOZbU2mwxOWeTOoq-nlSQW"
 
-    # ── Phương pháp 1: gdown với id= và fuzzy=True (ổn định nhất) ──────────────
-    # Lý do: gdown.download(url, ...) dùng URL dạng uc?id=... hay bị Google chặn
-    # bằng trang xác nhận virus scan. Dùng id= trực tiếp + fuzzy=True sẽ tự xử lý.
     if HAS_GDOWN:
         try:
             st.info("⏳ Đang download model từ Google Drive (~5.96 MB)...")
-            gdown.download(
-                id=DRIVE_FILE_ID,       # dùng id= thay vì URL
-                output=str(MODEL_PATH),
-                quiet=False,
-                fuzzy=True,             # tự xử lý redirect & xác nhận
-            )
+            gdown.download(id=DRIVE_FILE_ID, output=str(MODEL_PATH), quiet=False, fuzzy=True)
             if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1_000_000:
                 st.success("✅ Download thành công!")
                 return True
@@ -139,39 +122,28 @@ def download_model_from_github():
     else:
         st.warning("❌ Không tìm thấy thư viện `gdown`. Hãy thêm vào requirements.txt")
 
-    # ── Phương pháp 2: requests session (xử lý cookie xác nhận của GDrive) ────
-    # Lý do: Google Drive trả về cookie/token xác nhận, cần lấy token rồi gọi lại
     try:
         import requests
         st.info("⏳ Đang thử tải bằng requests session...")
         session = requests.Session()
-
         url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}&export=download"
         resp = session.get(url, stream=True, timeout=60)
-
-        # Tìm token xác nhận trong cookie
         token = None
         for k, v in resp.cookies.items():
             if k.startswith("download_warning"):
                 token = v
                 break
-
-        # Fallback: tìm token trong nội dung HTML
         if token is None:
             match = re.search(r'confirm=([0-9A-Za-z_\-]+)', resp.text)
             if match:
                 token = match.group(1)
-
-        # Tải lại với token xác nhận
         if token:
             url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}&export=download&confirm={token}"
             resp = session.get(url, stream=True, timeout=120)
-
         with open(MODEL_PATH, "wb") as f:
             for chunk in resp.iter_content(chunk_size=32768):
                 if chunk:
                     f.write(chunk)
-
         if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1_000_000:
             st.success("✅ Download thành công!")
             return True
@@ -180,7 +152,6 @@ def download_model_from_github():
     except Exception as e:
         st.warning(f"⚠️ requests thất bại: {e}")
 
-    # ── Phương pháp 3: urllib đơn giản (fallback cuối) ────────────────────────
     try:
         st.info("⏳ Thử tải bằng urllib (fallback cuối)...")
         url = f"https://drive.google.com/uc?export=download&id={DRIVE_FILE_ID}&confirm=t"
@@ -197,30 +168,26 @@ def download_model_from_github():
 
 @st.cache_resource
 def load_model():
-    """Load YOLOv8 model. Headless mode cho Streamlit Cloud."""
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     os.environ['DISPLAY'] = ''
-    
-    # [SỬA] Ưu tiên check file local trước (vì bạn đã có sẵn models/best.pt trên Github)
     if not MODEL_PATH.exists() or MODEL_PATH.stat().st_size < 1000000:
         model_exists = download_model_from_github()
     else:
         model_exists = True
-    
     if not model_exists:
         return None
-    
     try:
         from ultralytics import YOLO
-        # [SỬA] Load model
         model = YOLO(str(MODEL_PATH))
         return model
     except Exception as e:
-        error_msg = str(e)
-        st.warning(f"❌ Lỗi load model: {error_msg}")
+        st.warning(f"❌ Lỗi load model: {e}")
         return None
 
 
+# ════════════════════════════════════════════════════
+#  EDA STATS — SỐ LIỆU THỰC TỪ TRAINING
+# ════════════════════════════════════════════════════
 @st.cache_data
 def load_eda_stats():
     """Số liệu thực từ quá trình train YOLOv8 (results.csv + confusion_matrix)."""
@@ -230,15 +197,12 @@ def load_eda_stats():
         "test":  {"helmet": 1654,  "head":  430, "person":  1046},
     }
 
-    # ── Chỉ số tổng hợp tại epoch tốt nhất (epoch 44) ─────────────────────────
-    # Nguồn: results.csv — best epoch theo mAP@50
+    # Chỉ số tổng hợp tại epoch tốt nhất (epoch 44) — nguồn: results.csv
     metrics = {
-        "mAP50":     0.644,   # metrics/mAP50(B)  @ epoch 44
-        "mAP50-95":  0.418,   # metrics/mAP50-95(B) @ epoch 44
-        "Precision": 0.623,   # metrics/precision(B) @ epoch 44
-        "Recall":    0.594,   # metrics/recall(B) @ epoch 44
-        # Per-class AP ước tính từ confusion matrix normalized:
-        # helmet: recall=0.93, head: recall=0.92, person: recall thấp (~0.01)
+        "mAP50":     0.644,
+        "mAP50-95":  0.418,
+        "Precision": 0.623,
+        "Recall":    0.594,
         "per_class": {
             "helmet": {"AP50": 0.72, "AP": 0.45},
             "head":   {"AP50": 0.68, "AP": 0.40},
@@ -246,10 +210,9 @@ def load_eda_stats():
         }
     }
 
-    # ── Dữ liệu từng epoch — lấy thẳng từ results.csv ─────────────────────────
     epochs = list(range(1, 51))
 
-    # train_loss = train/box_loss + train/cls_loss (combined)
+    # train_loss = train/box_loss + train/cls_loss — lấy thẳng từ results.csv
     train_loss = [
         3.491, 2.646, 2.590, 2.595, 2.496, 2.416, 2.367, 2.352, 2.302, 2.271,
         2.257, 2.239, 2.199, 2.167, 2.161, 2.160, 2.115, 2.130, 2.082, 2.075,
@@ -257,7 +220,7 @@ def load_eda_stats():
         1.966, 1.928, 1.935, 1.920, 1.921, 1.903, 1.886, 1.890, 1.865, 1.861,
         1.769, 1.746, 1.734, 1.722, 1.714, 1.694, 1.679, 1.676, 1.666, 1.645,
     ]
-    # val_loss = val/box_loss + val/cls_loss (combined)
+    # val_loss = val/box_loss + val/cls_loss
     val_loss = [
         2.677, 2.446, 2.583, 2.464, 2.302, 2.307, 2.428, 2.305, 2.216, 2.174,
         2.153, 2.154, 2.164, 2.096, 2.094, 2.090, 2.055, 2.067, 2.074, 2.056,
@@ -274,24 +237,17 @@ def load_eda_stats():
         0.643, 0.642, 0.641, 0.644, 0.643, 0.643, 0.642, 0.642, 0.643, 0.642,
     ]
 
-    # ── Confusion matrix — số thực từ confusion_matrix.png ─────────────────────
-    # Rows = Predicted (helmet, head, person), Cols = True (helmet, head, person)
-    # Bỏ cột/hàng background để giữ ma trận 3x3
-    # helmet_pred: [2668,   8,   0]
-    # head_pred:   [   3, 786,   0]
-    # person_pred: [   0,   1, 122]  (122 = person true positive từ background col)
-    # Chú ý: confusion matrix của YOLO là Predicted x True
-    # Ta dùng True x Predicted (standard) để vẽ: rows=actual, cols=predicted
+    # Confusion matrix — số thực từ confusion_matrix.png (rows=actual, cols=predicted)
     cm = np.array([
-        [2668,   3,   0],   # actual helmet  → pred helmet=2668, head=3,  person=0
-        [   8, 786,   1],   # actual head    → pred helmet=8,    head=786, person=1
-        [   0,   0, 122],   # actual person  → pred helmet=0,    head=0,   person=122
+        [2668,   3,   0],   # actual helmet
+        [   8, 786,   1],   # actual head
+        [   0,   0, 122],   # actual person
     ])
     return class_counts, metrics, epochs, train_loss, val_loss, map50_hist, cm
 
 
 # ════════════════════════════════════════════════════
-#  MOCK INFERENCE (khi chưa có model)
+#  INFERENCE
 # ════════════════════════════════════════════════════
 def mock_detect(image: np.ndarray):
     """Tạo kết quả giả để test UI khi chưa có best.pt."""
@@ -300,29 +256,54 @@ def mock_detect(image: np.ndarray):
     n = random.randint(2, 5)
     for _ in range(n):
         cls_id = random.choice([0, 0, 0, 1, 2])
-        x1 = random.randint(10, w//2)
-        y1 = random.randint(10, h//2)
-        x2 = random.randint(x1+40, min(x1+200, w-10))
-        y2 = random.randint(y1+40, min(y1+200, h-10))
+        x1 = random.randint(10, w // 2)
+        y1 = random.randint(10, h // 2)
+        x2 = random.randint(x1 + 40, min(x1 + 200, w - 10))
+        y2 = random.randint(y1 + 40, min(y1 + 200, h - 10))
         conf = round(random.uniform(0.52, 0.97), 2)
         boxes.append({"cls": cls_id, "name": CLASSES[cls_id],
                       "conf": conf, "box": [x1, y1, x2, y2]})
     return boxes
 
 
-def real_detect(model, image, conf_thresh):
+def real_detect(model, image: np.ndarray, conf_thresh: float):
+    """
+    Chạy inference thực với YOLOv8.
+    - head dùng ngưỡng thấp hơn (0.25) để không bỏ sót vi phạm.
+    - Các class còn lại dùng conf_thresh từ slider.
+    """
     results = model.predict(image, conf=0.25, verbose=False, device='cpu')
-    # Sau đó filter: head giữ conf >= 0.25, helmet/person >= conf_thresh
     boxes = []
     for box in results[0].boxes:
-        cls_id = int(box.cls)
-        conf   = float(box.conf)
-        name   = CLASSES[cls_id]
-        
-        # head dùng ngưỡng thấp hơn để không bỏ sót vi phạm
-        threshold = 0.25 if name == "head" else conf_thresh
-        if conf >= threshold:
-            boxes.append({...})
+        try:
+            cls_id = int(box.cls.item())
+            conf   = round(float(box.conf.item()), 3)
+
+            # Lấy tọa độ an toàn: xyxy → cpu → tolist → int
+            coords = box.xyxy[0].cpu().tolist()
+            x1, y1, x2, y2 = [max(0, int(round(v))) for v in coords]
+
+            # Bỏ box không hợp lệ
+            if x2 <= x1 or y2 <= y1:
+                continue
+            if cls_id < 0 or cls_id >= len(CLASSES):
+                continue
+
+            name = CLASSES[cls_id]
+
+            # head dùng ngưỡng thấp hơn để tăng recall, tránh miss vi phạm
+            threshold = 0.25 if name == "head" else conf_thresh
+            if conf < threshold:
+                continue
+
+            boxes.append({
+                "cls":  cls_id,
+                "name": name,
+                "conf": conf,
+                "box":  [x1, y1, x2, y2],
+            })
+        except Exception:
+            continue  # bỏ qua box lỗi, không crash toàn app
     return boxes
 
 
@@ -344,15 +325,15 @@ def draw_detections(image: np.ndarray, boxes: list) -> Image.Image:
         label = f"{name} {conf:.2f}"
         tw = len(label) * 7
         th = 16
-        draw.rectangle([x1, y1-th-4, x1+tw+6, y1], fill=c)
-        draw.text((x1+3, y1-th-2), label, fill=(255,255,255))
+        draw.rectangle([x1, y1 - th - 4, x1 + tw + 6, y1], fill=c)
+        draw.text((x1 + 3, y1 - th - 2), label, fill=(255, 255, 255))
     return pil_img
 
 
 def check_violation(boxes: list) -> bool:
     heads   = [d for d in boxes if d["name"] == "head"]
     helmets = [d for d in boxes if d["name"] == "helmet"]
-    
+
     if not heads:
         return False
     if not helmets:
@@ -362,25 +343,26 @@ def check_violation(boxes: list) -> bool:
         hx1, hy1, hx2, hy2 = hd["box"]
         hd_area = (hx2 - hx1) * (hy2 - hy1)
         covered = False
-        
+
         for hm in helmets:
             mx1, my1, mx2, my2 = hm["box"]
             ix = max(0, min(hx2, mx2) - max(hx1, mx1))
             iy = max(0, min(hy2, my2) - max(hy1, my1))
             inter_area = ix * iy
-            
-            helmet_above = my1 < hy1 + (hy2 - hy1) * 0.35
+            helmet_above  = my1 < hy1 + (hy2 - hy1) * 0.35
             overlap_ratio = inter_area / hd_area if hd_area > 0 else 0
-            
             if helmet_above and overlap_ratio >= 0.20:
                 covered = True
                 break
-        
+
         if not covered:
             return True
     return False
 
+
+# ════════════════════════════════════════════════════
 #  SIDEBAR NAVIGATION
+# ════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("## 🪖 Hard Hat Detection")
     st.markdown("---")
@@ -403,6 +385,7 @@ with st.sidebar:
         st.warning("⚠️ Chưa load được best.pt\nĐang chạy chế độ **demo mock**")
 
 
+# ════════════════════════════════════════════════════
 #  TRANG 1 — GIỚI THIỆU & EDA
 # ════════════════════════════════════════════════════
 if page.startswith("📊"):
@@ -450,7 +433,7 @@ if page.startswith("📊"):
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4), facecolor="#0d1117")
     split_labels = ["train", "val", "test"]
-    colors_bar = ["#00c853", "#f44336", "#ff9800"]
+    colors_bar   = ["#00c853", "#f44336", "#ff9800"]
 
     for ax, split in zip(axes, split_labels):
         vals = [class_counts[split][c] for c in CLASSES]
@@ -461,7 +444,7 @@ if page.startswith("📊"):
         ax.tick_params(colors="#8b949e")
         for spine in ax.spines.values(): spine.set_color("#30363d")
         for bar, v in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 50,
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 50,
                     f"{v:,}", ha="center", va="bottom", color="#e6edf3", fontsize=10)
 
     plt.tight_layout()
@@ -513,6 +496,7 @@ if page.startswith("📊"):
         """)
 
 
+# ════════════════════════════════════════════════════
 #  TRANG 2 — DEMO PHÁT HIỆN
 # ════════════════════════════════════════════════════
 elif page.startswith("🔍"):
@@ -536,7 +520,7 @@ elif page.startswith("🔍"):
     with tab_upload:
         st.markdown("#### Tải ảnh hoặc video lên để phân tích")
         uploaded = st.file_uploader(
-            "Chọn file ảnh (jpg/png)",
+            "Chọn file ảnh hoặc video",
             type=["jpg", "jpeg", "png", "mp4", "avi", "mov"],
         )
 
@@ -544,11 +528,12 @@ elif page.startswith("🔍"):
             is_video = uploaded.type.startswith("video")
 
             if not is_video:
-                pil_img = Image.open(uploaded).convert("RGB")
+                # ── XỬ LÝ ẢNH ────────────────────────────────────────────────
+                pil_img   = Image.open(uploaded).convert("RGB")
                 img_array = np.array(pil_img)
 
                 with st.spinner("Đang phân tích..."):
-                    t0 = time.time()
+                    t0    = time.time()
                     boxes = real_detect(model, img_array, conf_thresh) if model else mock_detect(img_array)
                     elapsed = time.time() - t0
 
@@ -566,9 +551,9 @@ elif page.startswith("🔍"):
                 st.markdown("---")
                 mc = st.columns(4)
                 mc[0].metric("⏱️ Thời gian", f"{elapsed*1000:.0f} ms")
-                mc[1].metric("🪖 Helmet",  sum(1 for b in boxes if b["name"]=="helmet"))
-                mc[2].metric("👤 Head",    sum(1 for b in boxes if b["name"]=="head"))
-                mc[3].metric("🧍 Person",  sum(1 for b in boxes if b["name"]=="person"))
+                mc[1].metric("🪖 Helmet", sum(1 for b in boxes if b["name"] == "helmet"))
+                mc[2].metric("👤 Head",   sum(1 for b in boxes if b["name"] == "head"))
+                mc[3].metric("🧍 Person", sum(1 for b in boxes if b["name"] == "person"))
 
                 if violation:
                     st.markdown("""
@@ -585,16 +570,15 @@ elif page.startswith("🔍"):
 
                 if boxes:
                     st.markdown("**Chi tiết phát hiện:**")
-                    df_boxes = pd.DataFrame(boxes)[["name","conf","box"]]
+                    df_boxes = pd.DataFrame(boxes)[["name", "conf", "box"]]
                     df_boxes.columns = ["Class", "Confidence", "Bounding Box"]
                     df_boxes["Confidence"] = df_boxes["Confidence"].map("{:.3f}".format)
                     st.dataframe(df_boxes, use_container_width=True)
 
             else:
-                # ── XỬ LÝ VIDEO bằng imageio (không cần libGL / cv2) ──────────
+                # ── XỬ LÝ VIDEO bằng imageio (không cần libGL / cv2) ─────────
                 st.markdown("#### 🎬 Phân tích Video")
 
-                # Cài imageio[ffmpeg] nếu chưa có
                 try:
                     import imageio
                     import imageio.v3 as iio
@@ -606,18 +590,9 @@ elif page.startswith("🔍"):
                     st.error("❌ Thiếu thư viện `imageio`. Hãy thêm `imageio[ffmpeg]` vào requirements.txt rồi redeploy.")
                     st.stop()
 
-                # Lưu video tạm
                 tmp_video = Path("/tmp/uploaded_video.mp4")
                 tmp_video.write_bytes(uploaded.read())
 
-                # Đọc metadata để lấy số frame
-                try:
-                    props = iio.improps(str(tmp_video), plugin="pyav")
-                    total_frames = props.n_images if props.n_images and props.n_images > 0 else None
-                except Exception:
-                    total_frames = None
-
-                # Cài đặt xử lý
                 max_frames = st.slider(
                     "Số frame tối đa cần phân tích (càng nhiều càng chậm)",
                     min_value=5, max_value=100, value=20, step=5,
@@ -632,7 +607,6 @@ elif page.startswith("🔍"):
                     progress_bar = st.progress(0, text="Đang đọc video...")
                     status_text  = st.empty()
 
-                    # Đọc frames bằng imageio pyav plugin
                     sampled_frames = []
                     frame_indices  = []
                     try:
@@ -654,7 +628,6 @@ elif page.startswith("🔍"):
 
                     status_text.text(f"Đọc được {total} frames. Đang chạy detection...")
 
-                    # Chạy detection trên từng frame
                     annotated_frames = []
                     all_violations   = []
                     t_start = time.time()
@@ -662,10 +635,9 @@ elif page.startswith("🔍"):
                     for i, (frame_np, fidx) in enumerate(zip(sampled_frames, frame_indices)):
                         pct = int((i + 1) / total * 100)
                         progress_bar.progress(pct, text=f"Frame {fidx} — {pct}%")
-
-                        frame_rgb = frame_np[:, :, :3]  # loại bỏ alpha nếu có
-                        boxes_f = real_detect(model, frame_rgb, conf_thresh) if model else mock_detect(frame_rgb)
-                        ann_pil  = draw_detections(frame_rgb, boxes_f)
+                        frame_rgb = frame_np[:, :, :3]
+                        boxes_f   = real_detect(model, frame_rgb, conf_thresh) if model else mock_detect(frame_rgb)
+                        ann_pil   = draw_detections(frame_rgb, boxes_f)
                         annotated_frames.append((fidx, ann_pil, boxes_f))
                         all_violations.append(check_violation(boxes_f))
 
@@ -673,13 +645,12 @@ elif page.startswith("🔍"):
                     progress_bar.empty()
                     status_text.empty()
 
-                    # ── Tổng kết ────────────────────────────────────────────────
                     viol_count = sum(all_violations)
                     c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("⏱️ Tổng thời gian",   f"{elapsed_total:.1f}s")
-                    c2.metric("🖼️ Frames đã xử lý",  total)
-                    c3.metric("🚨 Frame vi phạm",     viol_count)
-                    c4.metric("✅ Frame hợp lệ",       total - viol_count)
+                    c1.metric("⏱️ Tổng thời gian",  f"{elapsed_total:.1f}s")
+                    c2.metric("🖼️ Frames đã xử lý", total)
+                    c3.metric("🚨 Frame vi phạm",    viol_count)
+                    c4.metric("✅ Frame hợp lệ",      total - viol_count)
 
                     if viol_count > 0:
                         st.markdown(f"""
@@ -694,30 +665,24 @@ elif page.startswith("🔍"):
 
                     st.markdown("---")
                     st.markdown("#### 🖼️ Preview các frame đã annotate")
-
-                    # Hiển thị tối đa 12 frame dạng grid
                     preview_frames = annotated_frames[:12]
                     cols_per_row = 3
-                    rows = [preview_frames[i:i+cols_per_row] for i in range(0, len(preview_frames), cols_per_row)]
+                    rows = [preview_frames[i:i + cols_per_row] for i in range(0, len(preview_frames), cols_per_row)]
                     for row in rows:
                         cols = st.columns(cols_per_row)
                         for col, (fidx, ann_pil, boxes_f) in zip(cols, row):
                             is_viol = check_violation(boxes_f)
-                            label = f"Frame {fidx} {'🚨' if is_viol else '✅'}"
-                            col.image(ann_pil, caption=label, use_container_width=True)
+                            col.image(ann_pil, caption=f"Frame {fidx} {'🚨' if is_viol else '✅'}",
+                                      use_container_width=True)
 
-                    # ── Export video output (mp4) bằng imageio ──────────────────
                     st.markdown("---")
                     st.markdown("#### 💾 Tải video kết quả")
                     with st.spinner("Đang render video output..."):
                         try:
-                            out_path = Path("/tmp/output_annotated.mp4")
+                            out_path  = Path("/tmp/output_annotated.mp4")
                             frames_np = [np.array(ann_pil) for _, ann_pil, _ in annotated_frames]
                             iio.imwrite(
-                                str(out_path),
-                                frames_np,
-                                plugin="pyav",
-                                codec="libx264",
+                                str(out_path), frames_np, plugin="pyav", codec="libx264",
                                 fps=max(1, int(len(frames_np) / max(elapsed_total, 1))),
                             )
                             with open(out_path, "rb") as f:
@@ -742,11 +707,11 @@ elif page.startswith("🔍"):
         cam_img = st.camera_input("📷 Nhấn nút để chụp ảnh")
 
         if cam_img:
-            pil_img = Image.open(cam_img).convert("RGB")
+            pil_img   = Image.open(cam_img).convert("RGB")
             img_array = np.array(pil_img)
 
             with st.spinner("Đang phân tích..."):
-                t0 = time.time()
+                t0    = time.time()
                 boxes = real_detect(model, img_array, conf_thresh) if model else mock_detect(img_array)
                 elapsed = time.time() - t0
 
@@ -754,14 +719,14 @@ elif page.startswith("🔍"):
             violation  = check_violation(boxes)
 
             col1, col2 = st.columns(2)
-            col1.image(pil_img, caption="Ảnh chụp", use_container_width=True)
-            col2.image(result_pil, caption="Kết quả", use_container_width=True)
+            col1.image(pil_img,    caption="Ảnh chụp",       use_container_width=True)
+            col2.image(result_pil, caption="Kết quả",        use_container_width=True)
 
             mc = st.columns(4)
             mc[0].metric("⏱️ Thời gian", f"{elapsed*1000:.0f} ms")
-            mc[1].metric("🪖 Helmet",  sum(1 for b in boxes if b["name"]=="helmet"))
-            mc[2].metric("👤 Head",    sum(1 for b in boxes if b["name"]=="head"))
-            mc[3].metric("🧍 Person",  sum(1 for b in boxes if b["name"]=="person"))
+            mc[1].metric("🪖 Helmet", sum(1 for b in boxes if b["name"] == "helmet"))
+            mc[2].metric("👤 Head",   sum(1 for b in boxes if b["name"] == "head"))
+            mc[3].metric("🧍 Person", sum(1 for b in boxes if b["name"] == "person"))
 
             if violation:
                 st.error("🚨 PHÁT HIỆN VI PHẠM! Có người không đội mũ bảo hộ.")
@@ -784,12 +749,12 @@ elif page.startswith("📈"):
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<p class="section-title">🏆 Chỉ số tổng quan (Test set)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">🏆 Chỉ số tổng quan (Best Epoch 44)</p>', unsafe_allow_html=True)
     m_cols = st.columns(4)
-    m_cols[0].metric("mAP@50",    f"{metrics['mAP50']:.3f}",    "↑ tốt")
-    m_cols[1].metric("mAP@50-95", f"{metrics['mAP50-95']:.3f}", "")
-    m_cols[2].metric("Precision",  f"{metrics['Precision']:.3f}","")
-    m_cols[3].metric("Recall",     f"{metrics['Recall']:.3f}",  "")
+    m_cols[0].metric("mAP@50",    f"{metrics['mAP50']:.3f}")
+    m_cols[1].metric("mAP@50-95", f"{metrics['mAP50-95']:.3f}")
+    m_cols[2].metric("Precision",  f"{metrics['Precision']:.3f}")
+    m_cols[3].metric("Recall",     f"{metrics['Recall']:.3f}")
 
     st.markdown("---")
 
@@ -804,13 +769,15 @@ elif page.startswith("📈"):
                       label="AP@50",    color="#00c853", edgecolor="#0d1117")
     bars2 = ax_pc.bar(x + w/2, [pc[c]["AP"]   for c in CLASSES], w,
                       label="AP@50-95", color="#ff9800", edgecolor="#0d1117")
-    ax_pc.set_xticks(x); ax_pc.set_xticklabels(CLASSES, color="#e6edf3", fontsize=12)
-    ax_pc.set_ylim(0, 1.0); ax_pc.set_ylabel("AP Score", color="#8b949e")
+    ax_pc.set_xticks(x)
+    ax_pc.set_xticklabels(CLASSES, color="#e6edf3", fontsize=12)
+    ax_pc.set_ylim(0, 1.0)
+    ax_pc.set_ylabel("AP Score", color="#8b949e")
     ax_pc.tick_params(colors="#8b949e")
     for spine in ax_pc.spines.values(): spine.set_color("#30363d")
     ax_pc.legend(facecolor="#161b27", labelcolor="#e6edf3")
     for bar in [*bars1, *bars2]:
-        ax_pc.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.01,
+        ax_pc.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
                    f"{bar.get_height():.3f}", ha="center", color="#e6edf3", fontsize=9)
     plt.tight_layout()
     st.pyplot(fig_pc)
@@ -826,23 +793,27 @@ elif page.startswith("📈"):
         for sp in ax.spines.values(): sp.set_color("#30363d")
 
     ax1.plot(epochs, train_loss, color="#00c853", linewidth=1.8, label="Train Loss")
-    ax1.plot(epochs, val_loss,   color="#f44336", linewidth=1.8, label="Val Loss",   linestyle="--")
+    ax1.plot(epochs, val_loss,   color="#f44336", linewidth=1.8, label="Val Loss", linestyle="--")
     ax1.set_title("Loss theo Epoch", color="#e6edf3", fontsize=13)
-    ax1.set_xlabel("Epoch", color="#8b949e"); ax1.set_ylabel("Loss", color="#8b949e")
+    ax1.set_xlabel("Epoch", color="#8b949e")
+    ax1.set_ylabel("Loss",  color="#8b949e")
     ax1.legend(facecolor="#161b27", labelcolor="#e6edf3")
 
     ax2.plot(epochs, map50_hist, color="#f59e0b", linewidth=2, label="mAP@50")
-    ax2.axhline(y=metrics["mAP50"], color="#00c853", linestyle=":", linewidth=1.5, label=f"Best={metrics['mAP50']}")
+    ax2.axhline(y=metrics["mAP50"], color="#00c853", linestyle=":", linewidth=1.5,
+                label=f"Best = {metrics['mAP50']:.3f} (epoch 44)")
     ax2.set_title("mAP@50 theo Epoch", color="#e6edf3", fontsize=13)
-    ax2.set_xlabel("Epoch", color="#8b949e"); ax2.set_ylabel("mAP@50", color="#8b949e")
-    ax2.set_ylim(0, 1.0); ax2.legend(facecolor="#161b27", labelcolor="#e6edf3")
+    ax2.set_xlabel("Epoch", color="#8b949e")
+    ax2.set_ylabel("mAP@50", color="#8b949e")
+    ax2.set_ylim(0, 1.0)
+    ax2.legend(facecolor="#161b27", labelcolor="#e6edf3")
 
     plt.tight_layout()
     st.pyplot(fig_hist)
 
     st.markdown("---")
 
-    st.markdown('<p class="section-title">🔲 Ma trận nhầm lẫn (Test set)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">🔲 Ma trận nhầm lẫn (Validation set)</p>', unsafe_allow_html=True)
 
     col_cm, col_analysis = st.columns([1, 1])
     with col_cm:
@@ -888,9 +859,9 @@ elif page.startswith("📈"):
 
         **Hướng cải thiện:**
         1. Tăng dữ liệu `person` hoặc dùng focal loss để cân bằng class
-        2. Tăng ngưỡng overlap IoU cho class `person` khi annotate
+        2. Thêm `copy_paste=0.3` trong augmentation để tăng head recall
         3. Thử model lớn hơn (`yolov8s` / `yolov8m`) để cải thiện recall
-        4. Train thêm epochs hoặc điều chỉnh learning rate schedule
+        4. Hạ conf threshold riêng cho `head` xuống 0.25 (đã áp dụng)
         """)
 
     st.markdown("---")
@@ -903,11 +874,11 @@ elif page.startswith("📈"):
     model_cols[3].metric("Best Epoch",   "44 / 50")
 
     st.markdown("""
-    | Model     | mAP@50 | mAP@50-95 | Precision | Recall |
-    |-----------|--------|-----------|-----------|--------|
+    | Model | mAP@50 | mAP@50-95 | Precision | Recall |
+    |-------|--------|-----------|-----------|--------|
     | **YOLOv8n (trained)** | **0.644** | **0.418** | **0.623** | **0.594** |
-    | YOLOv8s   | ~0.70  | ~0.47     | ~0.68     | ~0.63  |
-    | YOLOv8m   | ~0.74  | ~0.51     | ~0.72     | ~0.67  |
+    | YOLOv8s | ~0.70 | ~0.47 | ~0.68 | ~0.63 |
+    | YOLOv8m | ~0.74 | ~0.51 | ~0.72 | ~0.67 |
 
     > Kết quả trên là của model hiện tại (YOLOv8n, 50 epochs). Các model lớn hơn là ước tính.
     """)
