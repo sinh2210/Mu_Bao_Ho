@@ -418,8 +418,8 @@ if page.startswith("📊"):
     st.markdown('<p class="section-title">🎯 Giá trị thực tiễn</p>', unsafe_allow_html=True)
     st.markdown("""
     > Tai nạn lao động do không đội mũ bảo hộ là một trong những nguyên nhân chính gây
-    > thương vong tại công trường xây dựng. Hệ thống phát hiện tự động giúp **giám sát
-    > 24/7**, cảnh báo ngay lập tức khi phát hiện vi phạm, giảm thiểu rủi ro cho người lao động.
+    > thương vong tại công trường xây dựng. Bài toán giúp **giám sát
+    > 24/7**, cảnh báo khi phát hiện vi phạm, giảm thiểu rủi ro cho người lao động.
 
     **Pipeline hoạt động:**
     1. Camera giám sát → frame ảnh/video
