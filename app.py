@@ -593,18 +593,38 @@ elif page.startswith("🔍"):
                 tmp_video = Path("/tmp/uploaded_video.mp4")
                 tmp_video.write_bytes(uploaded.read())
 
+                # Đọc metadata video để tính sample_step tự động
+                try:
+                    import av as _av
+                    _c = _av.open(str(tmp_video))
+                    _s = _c.streams.video[0]
+                    total_frames_in_video = _s.frames or 0
+                    video_fps = float(_s.average_rate) if _s.average_rate else 30.0
+                    video_dur = float(_s.duration * _s.time_base) if _s.duration else 0.0
+                    _c.close()
+                except Exception:
+                    total_frames_in_video = 0
+                    video_fps = 30.0
+                    video_dur = 0.0
+
+                if total_frames_in_video > 0:
+                    st.info(f"📹 Video: **{total_frames_in_video} frames** · {video_fps:.0f} fps · {video_dur:.1f}s")
+
                 max_frames = st.slider(
-                    "Số frame tối đa cần phân tích (càng nhiều càng chậm)",
-                    min_value=5, max_value=100, value=20, step=5,
-                    help="Streamlit Cloud có RAM giới hạn, nên giữ ≤ 30 frames để an toàn."
-                )
-                sample_step = st.number_input(
-                    "Lấy mẫu mỗi N frame (1 = mọi frame, 5 = cứ 5 frame lấy 1)",
-                    min_value=1, max_value=30, value=5
+                    "Số frame tối đa cần phân tích",
+                    min_value=10, max_value=150, value=60, step=10,
+                    help="Phân bố đều toàn video. Streamlit Cloud nên giữ ≤ 80 frames."
                 )
 
+                # Tự động tính sample_step để lấy mẫu đều toàn video
+                if total_frames_in_video > 0 and total_frames_in_video > max_frames:
+                    auto_step = max(1, total_frames_in_video // max_frames)
+                else:
+                    auto_step = 1
+                st.caption(f"⚙️ Tự động lấy mẫu mỗi **{auto_step} frame** để phủ đều toàn video.")
+
                 if st.button("▶️ Bắt đầu phân tích video", type="primary"):
-                    progress_bar = st.progress(0, text="Đang đọc video...")
+                    progress_bar = st.progress(0, text="Đang đọc & lấy mẫu video...")
                     status_text  = st.empty()
 
                     sampled_frames = []
@@ -612,7 +632,10 @@ elif page.startswith("🔍"):
                     try:
                         reader = iio.imiter(str(tmp_video), plugin="pyav")
                         for idx, frame in enumerate(reader):
-                            if idx % sample_step == 0:
+                            # Bỏ qua frame tối (intro/fade) — mean < 8
+                            if frame.mean() < 8:
+                                continue
+                            if idx % auto_step == 0:
                                 sampled_frames.append(frame)
                                 frame_indices.append(idx)
                             if len(sampled_frames) >= max_frames:
@@ -626,7 +649,7 @@ elif page.startswith("🔍"):
                         st.error("Không đọc được frame nào từ video. Hãy thử file khác.")
                         st.stop()
 
-                    status_text.text(f"Đọc được {total} frames. Đang chạy detection...")
+                    status_text.text(f"Đọc được {total} frames sáng. Đang chạy detection...")
 
                     annotated_frames = []
                     all_violations   = []
@@ -644,6 +667,8 @@ elif page.startswith("🔍"):
                     elapsed_total = time.time() - t_start
                     progress_bar.empty()
                     status_text.empty()
+                    # Tính fps output: số frame / giây gốc tương ứng
+                    output_fps = max(1, round(total / max(video_dur, 1)))
 
                     viol_count = sum(all_violations)
                     c1, c2, c3, c4 = st.columns(4)
@@ -683,7 +708,7 @@ elif page.startswith("🔍"):
                             frames_np = [np.array(ann_pil) for _, ann_pil, _ in annotated_frames]
                             iio.imwrite(
                                 str(out_path), frames_np, plugin="pyav", codec="libx264",
-                                fps=max(1, int(len(frames_np) / max(elapsed_total, 1))),
+                                fps=output_fps,
                             )
                             with open(out_path, "rb") as f:
                                 st.download_button(
