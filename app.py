@@ -392,8 +392,21 @@ if page.startswith("📊"):
     st.title("📊 Giới thiệu & Khám phá Dữ liệu")
 
     with st.container():
-        cols = st.columns(len(STUDENT_INFO))
-        for col, (k, v) in zip(cols, STUDENT_INFO.items()):
+        # Hiển thị Tên đề tài riêng toàn chiều rộng để không bị cắt
+        ten_de_tai = STUDENT_INFO["Tên đề tài"]
+        st.markdown(f"""
+        <div style="background:#161b27; border:1px solid #30363d; border-left:4px solid #f59e0b;
+                    border-radius:10px; padding:14px 20px; margin-bottom:12px;">
+            <div style="font-size:12px; color:#8b949e; margin-bottom:4px;">Tên đề tài</div>
+            <div style="font-size:16px; font-weight:600; color:#e6edf3; line-height:1.5;">
+                {ten_de_tai}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        # 3 trường còn lại trong 3 cột
+        other_info = {k: v for k, v in STUDENT_INFO.items() if k != "Tên đề tài"}
+        cols = st.columns(len(other_info))
+        for col, (k, v) in zip(cols, other_info.items()):
             col.metric(k, v)
 
     st.markdown("---")
