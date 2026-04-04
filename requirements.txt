@@ -8,3 +8,5 @@ opencv-python-headless
 ultralytics
 gdown
 requests
+imageio[ffmpeg]
+av
