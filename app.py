@@ -555,7 +555,144 @@ elif page.startswith("🔍"):
                     st.dataframe(df_boxes, use_container_width=True)
 
             else:
-                st.warning("⚠️ Video processing không hỗ trợ trên Streamlit Cloud. Vui lòng upload ảnh thay vì video.")
+                # ── XỬ LÝ VIDEO bằng imageio (không cần libGL / cv2) ──────────
+                st.markdown("#### 🎬 Phân tích Video")
+
+                # Cài imageio[ffmpeg] nếu chưa có
+                try:
+                    import imageio
+                    import imageio.v3 as iio
+                    HAS_IMAGEIO = True
+                except ImportError:
+                    HAS_IMAGEIO = False
+
+                if not HAS_IMAGEIO:
+                    st.error("❌ Thiếu thư viện `imageio`. Hãy thêm `imageio[ffmpeg]` vào requirements.txt rồi redeploy.")
+                    st.stop()
+
+                # Lưu video tạm
+                tmp_video = Path("/tmp/uploaded_video.mp4")
+                tmp_video.write_bytes(uploaded.read())
+
+                # Đọc metadata để lấy số frame
+                try:
+                    props = iio.improps(str(tmp_video), plugin="pyav")
+                    total_frames = props.n_images if props.n_images and props.n_images > 0 else None
+                except Exception:
+                    total_frames = None
+
+                # Cài đặt xử lý
+                max_frames = st.slider(
+                    "Số frame tối đa cần phân tích (càng nhiều càng chậm)",
+                    min_value=5, max_value=100, value=20, step=5,
+                    help="Streamlit Cloud có RAM giới hạn, nên giữ ≤ 30 frames để an toàn."
+                )
+                sample_step = st.number_input(
+                    "Lấy mẫu mỗi N frame (1 = mọi frame, 5 = cứ 5 frame lấy 1)",
+                    min_value=1, max_value=30, value=5
+                )
+
+                if st.button("▶️ Bắt đầu phân tích video", type="primary"):
+                    progress_bar = st.progress(0, text="Đang đọc video...")
+                    status_text  = st.empty()
+
+                    # Đọc frames bằng imageio pyav plugin
+                    sampled_frames = []
+                    frame_indices  = []
+                    try:
+                        reader = iio.imiter(str(tmp_video), plugin="pyav")
+                        for idx, frame in enumerate(reader):
+                            if idx % sample_step == 0:
+                                sampled_frames.append(frame)
+                                frame_indices.append(idx)
+                            if len(sampled_frames) >= max_frames:
+                                break
+                    except Exception as e:
+                        st.error(f"❌ Không đọc được video: {e}")
+                        st.stop()
+
+                    total = len(sampled_frames)
+                    if total == 0:
+                        st.error("Không đọc được frame nào từ video. Hãy thử file khác.")
+                        st.stop()
+
+                    status_text.text(f"Đọc được {total} frames. Đang chạy detection...")
+
+                    # Chạy detection trên từng frame
+                    annotated_frames = []
+                    all_violations   = []
+                    t_start = time.time()
+
+                    for i, (frame_np, fidx) in enumerate(zip(sampled_frames, frame_indices)):
+                        pct = int((i + 1) / total * 100)
+                        progress_bar.progress(pct, text=f"Frame {fidx} — {pct}%")
+
+                        frame_rgb = frame_np[:, :, :3]  # loại bỏ alpha nếu có
+                        boxes_f = real_detect(model, frame_rgb, conf_thresh) if model else mock_detect(frame_rgb)
+                        ann_pil  = draw_detections(frame_rgb, boxes_f)
+                        annotated_frames.append((fidx, ann_pil, boxes_f))
+                        all_violations.append(check_violation(boxes_f))
+
+                    elapsed_total = time.time() - t_start
+                    progress_bar.empty()
+                    status_text.empty()
+
+                    # ── Tổng kết ────────────────────────────────────────────────
+                    viol_count = sum(all_violations)
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("⏱️ Tổng thời gian",   f"{elapsed_total:.1f}s")
+                    c2.metric("🖼️ Frames đã xử lý",  total)
+                    c3.metric("🚨 Frame vi phạm",     viol_count)
+                    c4.metric("✅ Frame hợp lệ",       total - viol_count)
+
+                    if viol_count > 0:
+                        st.markdown(f"""
+                        <div class="alert-danger">
+                        🚨 <b>PHÁT HIỆN VI PHẠM</b> trong <b>{viol_count}/{total}</b> frames ({viol_count/total*100:.0f}%).
+                        </div>""", unsafe_allow_html=True)
+                    else:
+                        st.markdown("""
+                        <div class="alert-success">
+                        ✅ <b>Không phát hiện vi phạm</b> trong toàn bộ video đã kiểm tra.
+                        </div>""", unsafe_allow_html=True)
+
+                    st.markdown("---")
+                    st.markdown("#### 🖼️ Preview các frame đã annotate")
+
+                    # Hiển thị tối đa 12 frame dạng grid
+                    preview_frames = annotated_frames[:12]
+                    cols_per_row = 3
+                    rows = [preview_frames[i:i+cols_per_row] for i in range(0, len(preview_frames), cols_per_row)]
+                    for row in rows:
+                        cols = st.columns(cols_per_row)
+                        for col, (fidx, ann_pil, boxes_f) in zip(cols, row):
+                            is_viol = check_violation(boxes_f)
+                            label = f"Frame {fidx} {'🚨' if is_viol else '✅'}"
+                            col.image(ann_pil, caption=label, use_container_width=True)
+
+                    # ── Export video output (mp4) bằng imageio ──────────────────
+                    st.markdown("---")
+                    st.markdown("#### 💾 Tải video kết quả")
+                    with st.spinner("Đang render video output..."):
+                        try:
+                            out_path = Path("/tmp/output_annotated.mp4")
+                            frames_np = [np.array(ann_pil) for _, ann_pil, _ in annotated_frames]
+                            iio.imwrite(
+                                str(out_path),
+                                frames_np,
+                                plugin="pyav",
+                                codec="libx264",
+                                fps=max(1, int(len(frames_np) / max(elapsed_total, 1))),
+                            )
+                            with open(out_path, "rb") as f:
+                                st.download_button(
+                                    label="⬇️ Download video đã annotate (.mp4)",
+                                    data=f.read(),
+                                    file_name="hardhat_detection_output.mp4",
+                                    mime="video/mp4",
+                                )
+                        except Exception as e:
+                            st.warning(f"⚠️ Không xuất được video: {e}. Bạn vẫn có thể lưu từng frame ở trên.")
 
     with tab_webcam:
         st.markdown("#### Chụp ảnh từ webcam để phân tích")
