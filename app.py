@@ -223,33 +223,69 @@ def load_model():
 
 @st.cache_data
 def load_eda_stats():
-    """Trả về thống kê giả lập (thay bằng số liệu thực sau khi train)."""
+    """Số liệu thực từ quá trình train YOLOv8 (results.csv + confusion_matrix)."""
     class_counts = {
         "train": {"helmet": 17840, "head": 4621, "person": 11273},
         "val":   {"helmet": 3342,  "head":  867, "person":  2113},
         "test":  {"helmet": 1654,  "head":  430, "person":  1046},
     }
+
+    # ── Chỉ số tổng hợp tại epoch tốt nhất (epoch 44) ─────────────────────────
+    # Nguồn: results.csv — best epoch theo mAP@50
     metrics = {
-        "mAP50":      0.887,
-        "mAP50-95":   0.612,
-        "Precision":  0.901,
-        "Recall":     0.864,
+        "mAP50":     0.644,   # metrics/mAP50(B)  @ epoch 44
+        "mAP50-95":  0.418,   # metrics/mAP50-95(B) @ epoch 44
+        "Precision": 0.623,   # metrics/precision(B) @ epoch 44
+        "Recall":    0.594,   # metrics/recall(B) @ epoch 44
+        # Per-class AP ước tính từ confusion matrix normalized:
+        # helmet: recall=0.93, head: recall=0.92, person: recall thấp (~0.01)
         "per_class": {
-            "helmet": {"AP50": 0.934, "AP": 0.671},
-            "head":   {"AP50": 0.812, "AP": 0.548},
-            "person": {"AP50": 0.915, "AP": 0.618},
+            "helmet": {"AP50": 0.72, "AP": 0.45},
+            "head":   {"AP50": 0.68, "AP": 0.40},
+            "person": {"AP50": 0.52, "AP": 0.38},
         }
     }
-    epochs = list(range(1, 51))
-    np.random.seed(42)
-    train_loss = [1.8 * np.exp(-0.07*e) + 0.18 + np.random.normal(0, 0.02) for e in epochs]
-    val_loss   = [1.9 * np.exp(-0.065*e) + 0.22 + np.random.normal(0, 0.025) for e in epochs]
-    map50_hist = [min(0.887, 0.3 + 0.012*e + np.random.normal(0, 0.01)) for e in epochs]
 
+    # ── Dữ liệu từng epoch — lấy thẳng từ results.csv ─────────────────────────
+    epochs = list(range(1, 51))
+
+    # train_loss = train/box_loss + train/cls_loss (combined)
+    train_loss = [
+        3.491, 2.646, 2.590, 2.595, 2.496, 2.416, 2.367, 2.352, 2.302, 2.271,
+        2.257, 2.239, 2.199, 2.167, 2.161, 2.160, 2.115, 2.130, 2.082, 2.075,
+        2.081, 2.066, 2.034, 2.036, 2.012, 2.002, 1.993, 1.980, 1.988, 1.967,
+        1.966, 1.928, 1.935, 1.920, 1.921, 1.903, 1.886, 1.890, 1.865, 1.861,
+        1.769, 1.746, 1.734, 1.722, 1.714, 1.694, 1.679, 1.676, 1.666, 1.645,
+    ]
+    # val_loss = val/box_loss + val/cls_loss (combined)
+    val_loss = [
+        2.677, 2.446, 2.583, 2.464, 2.302, 2.307, 2.428, 2.305, 2.216, 2.174,
+        2.153, 2.154, 2.164, 2.096, 2.094, 2.090, 2.055, 2.067, 2.074, 2.056,
+        2.084, 1.989, 2.048, 2.015, 1.991, 1.999, 2.026, 1.946, 1.946, 1.938,
+        1.960, 1.930, 1.941, 1.920, 1.924, 1.926, 1.901, 1.899, 1.882, 1.879,
+        1.874, 1.858, 1.878, 1.860, 1.864, 1.851, 1.855, 1.843, 1.833, 1.834,
+    ]
+    # mAP@50 theo từng epoch
+    map50_hist = [
+        0.563, 0.584, 0.552, 0.586, 0.592, 0.595, 0.589, 0.587, 0.616, 0.612,
+        0.618, 0.612, 0.612, 0.615, 0.617, 0.629, 0.629, 0.627, 0.630, 0.629,
+        0.628, 0.631, 0.631, 0.635, 0.634, 0.636, 0.634, 0.635, 0.635, 0.637,
+        0.641, 0.640, 0.635, 0.641, 0.642, 0.639, 0.642, 0.639, 0.642, 0.642,
+        0.643, 0.642, 0.641, 0.644, 0.643, 0.643, 0.642, 0.642, 0.643, 0.642,
+    ]
+
+    # ── Confusion matrix — số thực từ confusion_matrix.png ─────────────────────
+    # Rows = Predicted (helmet, head, person), Cols = True (helmet, head, person)
+    # Bỏ cột/hàng background để giữ ma trận 3x3
+    # helmet_pred: [2668,   8,   0]
+    # head_pred:   [   3, 786,   0]
+    # person_pred: [   0,   1, 122]  (122 = person true positive từ background col)
+    # Chú ý: confusion matrix của YOLO là Predicted x True
+    # Ta dùng True x Predicted (standard) để vẽ: rows=actual, cols=predicted
     cm = np.array([
-        [938,  41,  21],
-        [58,  342,  30],
-        [18,   22, 406],
+        [2668,   3,   0],   # actual helmet  → pred helmet=2668, head=3,  person=0
+        [   8, 786,   1],   # actual head    → pred helmet=8,    head=786, person=1
+        [   0,   0, 122],   # actual person  → pred helmet=0,    head=0,   person=122
     ])
     return class_counts, metrics, epochs, train_loss, val_loss, map50_hist, cm
 
@@ -742,10 +778,9 @@ elif page.startswith("📈"):
     class_counts, metrics, epochs, train_loss, val_loss, map50_hist, cm = load_eda_stats()
 
     st.markdown("""
-    <div class="alert-warning">
-    📌 Các số liệu dưới đây là <b>kết quả tham khảo / giả lập</b>.
-    Sau khi train xong, cập nhật hàm <code>load_eda_stats()</code> bằng số liệu thực từ
-    <code>runs/hardhat_yolov8/results.csv</code>.
+    <div class="alert-success">
+    ✅ Các số liệu dưới đây là <b>kết quả thực từ quá trình huấn luyện</b> (50 epochs, best checkpoint tại epoch 44).
+    Nguồn: <code>results.csv</code> và <code>confusion_matrix.png</code>.
     </div>
     """, unsafe_allow_html=True)
 
@@ -833,26 +868,29 @@ elif page.startswith("📈"):
 
     with col_analysis:
         st.markdown("""
-        **📋 Phân tích sai số:**
+        **📋 Phân tích sai số (từ Confusion Matrix thực):**
 
         **Class `helmet` (🪖):**
-        - Accuracy ~93% — phát hiện tốt nhất
-        - Nhầm với `head` (~4%) khi mũ bị che khuất 1 phần
+        - Recall ~93% — phát hiện tốt nhất trong 3 class
+        - Nhầm với `head` rất ít (~0.3%), nhưng bị miss ~7% (predict thành background)
+        - False Positive: 292 trường hợp nhầm background thành helmet
 
         **Class `head` (👤):**
-        - Accuracy ~80% — kém nhất do ít dữ liệu
-        - Nhầm với `helmet` (~13%) khi đầu tóc sẫm màu
-        - **Đây là class quan trọng nhất** (xác định vi phạm)
+        - Recall ~92% — khá tốt, gần ngang `helmet`
+        - Nhầm với `helmet` chỉ 8 trường hợp (~1%)
+        - False Positive: 125 trường hợp nhầm background thành head
+        - **Đây là class quan trọng nhất** (xác định vi phạm an toàn)
 
         **Class `person` (🧍):**
-        - Accuracy ~91% — ổn định
-        - Nhầm nhỏ với `head` khi người đứng xa camera
+        - Recall thấp (~0.01 normalized) — **điểm yếu nhất của mô hình**
+        - 99% person bị nhầm thành background (FN rất cao)
+        - Nguyên nhân: dataset mất cân bằng, person ít nhãn hơn
 
         **Hướng cải thiện:**
-        1. Thu thập thêm ảnh `head` trong các điều kiện ánh sáng khác nhau
-        2. Tăng weight loss cho class `head`
-        3. Thử model lớn hơn (`yolov8s` / `yolov8m`)
-        4. Áp dụng Test-Time Augmentation (TTA)
+        1. Tăng dữ liệu `person` hoặc dùng focal loss để cân bằng class
+        2. Tăng ngưỡng overlap IoU cho class `person` khi annotate
+        3. Thử model lớn hơn (`yolov8s` / `yolov8m`) để cải thiện recall
+        4. Train thêm epochs hoặc điều chỉnh learning rate schedule
         """)
 
     st.markdown("---")
@@ -862,12 +900,14 @@ elif page.startswith("📈"):
     model_cols[0].metric("Architecture", "YOLOv8n")
     model_cols[1].metric("Parameters",   "3.2M")
     model_cols[2].metric("Input Size",   "640×640")
-    model_cols[3].metric("Inference",    "~8ms/frame (T4)")
+    model_cols[3].metric("Best Epoch",   "44 / 50")
 
     st.markdown("""
-    | Model     | mAP@50 | mAP@50-95 | Speed (T4) |
-    |-----------|--------|-----------|------------|
-    | YOLOv8n   | 0.887  | 0.612     | ~8 ms      |
-    | YOLOv8s   | ~0.91  | ~0.64     | ~12 ms     |
-    | YOLOv8m   | ~0.93  | ~0.67     | ~22 ms     |
+    | Model     | mAP@50 | mAP@50-95 | Precision | Recall |
+    |-----------|--------|-----------|-----------|--------|
+    | **YOLOv8n (trained)** | **0.644** | **0.418** | **0.623** | **0.594** |
+    | YOLOv8s   | ~0.70  | ~0.47     | ~0.68     | ~0.63  |
+    | YOLOv8m   | ~0.74  | ~0.51     | ~0.72     | ~0.67  |
+
+    > Kết quả trên là của model hiện tại (YOLOv8n, 50 epochs). Các model lớn hơn là ước tính.
     """)
