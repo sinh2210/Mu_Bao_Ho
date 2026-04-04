@@ -310,19 +310,19 @@ def mock_detect(image: np.ndarray):
     return boxes
 
 
-def real_detect(model, image: np.ndarray, conf_thresh: float):
-    """Chạy inference thực với YOLOv8."""
-    # [SỬA] Thêm device='cpu' để chắc chắn không văng lỗi trên Streamlit Free Tier
-    results = model.predict(image, conf=conf_thresh, verbose=False, device='cpu')
+def real_detect(model, image, conf_thresh):
+    results = model.predict(image, conf=0.25, verbose=False, device='cpu')
+    # Sau đó filter: head giữ conf >= 0.25, helmet/person >= conf_thresh
     boxes = []
     for box in results[0].boxes:
         cls_id = int(box.cls)
-        boxes.append({
-            "cls":  cls_id,
-            "name": CLASSES[cls_id],
-            "conf": round(float(box.conf), 3),
-            "box":  list(map(int, box.xyxy[0].tolist())),
-        })
+        conf   = float(box.conf)
+        name   = CLASSES[cls_id]
+        
+        # head dùng ngưỡng thấp hơn để không bỏ sót vi phạm
+        threshold = 0.25 if name == "head" else conf_thresh
+        if conf >= threshold:
+            boxes.append({...})
     return boxes
 
 
