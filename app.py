@@ -197,6 +197,7 @@ def load_eda_stats():
         "test":  {"helmet": 1654,  "head":  430, "person":  1046},
     }
 
+    # Chỉ số tổng hợp tại epoch tốt nhất (epoch 44) — nguồn: results.csv
     metrics = {
         "mAP50":     0.644,
         "mAP50-95":  0.418,
@@ -211,6 +212,7 @@ def load_eda_stats():
 
     epochs = list(range(1, 51))
 
+    # train_loss = train/box_loss + train/cls_loss — lấy thẳng từ results.csv
     train_loss = [
         3.491, 2.646, 2.590, 2.595, 2.496, 2.416, 2.367, 2.352, 2.302, 2.271,
         2.257, 2.239, 2.199, 2.167, 2.161, 2.160, 2.115, 2.130, 2.082, 2.075,
@@ -218,6 +220,7 @@ def load_eda_stats():
         1.966, 1.928, 1.935, 1.920, 1.921, 1.903, 1.886, 1.890, 1.865, 1.861,
         1.769, 1.746, 1.734, 1.722, 1.714, 1.694, 1.679, 1.676, 1.666, 1.645,
     ]
+    # val_loss = val/box_loss + val/cls_loss
     val_loss = [
         2.677, 2.446, 2.583, 2.464, 2.302, 2.307, 2.428, 2.305, 2.216, 2.174,
         2.153, 2.154, 2.164, 2.096, 2.094, 2.090, 2.055, 2.067, 2.074, 2.056,
@@ -225,6 +228,7 @@ def load_eda_stats():
         1.960, 1.930, 1.941, 1.920, 1.924, 1.926, 1.901, 1.899, 1.882, 1.879,
         1.874, 1.858, 1.878, 1.860, 1.864, 1.851, 1.855, 1.843, 1.833, 1.834,
     ]
+    # mAP@50 theo từng epoch
     map50_hist = [
         0.563, 0.584, 0.552, 0.586, 0.592, 0.595, 0.589, 0.587, 0.616, 0.612,
         0.618, 0.612, 0.612, 0.615, 0.617, 0.629, 0.629, 0.627, 0.630, 0.629,
@@ -233,10 +237,11 @@ def load_eda_stats():
         0.643, 0.642, 0.641, 0.644, 0.643, 0.643, 0.642, 0.642, 0.643, 0.642,
     ]
 
+    # Confusion matrix — số thực từ confusion_matrix.png (rows=actual, cols=predicted)
     cm = np.array([
-        [2668,   3,   0],
-        [   8, 786,   1],
-        [   0,   0, 122],
+        [2668,   3,   0],   # actual helmet
+        [   8, 786,   1],   # actual head
+        [   0,   0, 122],   # actual person
     ])
     return class_counts, metrics, epochs, train_loss, val_loss, map50_hist, cm
 
@@ -261,50 +266,24 @@ def mock_detect(image: np.ndarray):
     return boxes
 
 
-def real_detect(model, image: np.ndarray, conf_thresh: float, debug: bool = False):
+def real_detect(model, image: np.ndarray, conf_thresh: float):
     """
     Chạy inference thực với YOLOv8.
-
-    FIX: Hạ conf trong model.predict() xuống 0.10 (thay vì 0.25 cũ)
-    để YOLO trả về đủ candidate, sau đó mới filter theo ngưỡng thật.
-
-    - head dùng ngưỡng thấp hơn (0.20) để không bỏ sót vi phạm.
+    - head dùng ngưỡng thấp hơn (0.25) để không bỏ sót vi phạm.
     - Các class còn lại dùng conf_thresh từ slider.
     """
-    # ── FIX CHÍNH: conf=0.10 thay vì 0.25 ──────────────────────────────────
-    results = model.predict(image, conf=0.10, verbose=False, device='cpu')
-    # ────────────────────────────────────────────────────────────────────────
-
-    raw_boxes = results[0].boxes
+    results = model.predict(image, conf=0.25, verbose=False, device='cpu')
     boxes = []
-
-    # Debug: hiển thị tất cả raw detections trước khi filter
-    if debug and raw_boxes is not None and len(raw_boxes) > 0:
-        raw_info = []
-        for box in raw_boxes:
-            try:
-                cid  = int(box.cls.item())
-                cf   = round(float(box.conf.item()), 3)
-                name = CLASSES[cid] if 0 <= cid < len(CLASSES) else f"cls_{cid}"
-                raw_info.append(f"`{name}` conf={cf}")
-            except Exception:
-                pass
-        if raw_info:
-            st.caption(f"🔍 Raw detections (trước filter): {', '.join(raw_info)}")
-        else:
-            st.caption("🔍 Raw detections: **không có box nào** từ model (model không nhận ra đối tượng trong ảnh này)")
-
-    if raw_boxes is None or len(raw_boxes) == 0:
-        return boxes
-
-    for box in raw_boxes:
+    for box in results[0].boxes:
         try:
             cls_id = int(box.cls.item())
             conf   = round(float(box.conf.item()), 3)
 
+            # Lấy tọa độ an toàn: xyxy → cpu → tolist → int
             coords = box.xyxy[0].cpu().tolist()
             x1, y1, x2, y2 = [max(0, int(round(v))) for v in coords]
 
+            # Bỏ box không hợp lệ
             if x2 <= x1 or y2 <= y1:
                 continue
             if cls_id < 0 or cls_id >= len(CLASSES):
@@ -313,8 +292,7 @@ def real_detect(model, image: np.ndarray, conf_thresh: float, debug: bool = Fals
             name = CLASSES[cls_id]
 
             # head dùng ngưỡng thấp hơn để tăng recall, tránh miss vi phạm
-            # FIX: giảm threshold head từ 0.25 xuống 0.20
-            threshold = 0.20 if name == "head" else conf_thresh
+            threshold = 0.25 if name == "head" else conf_thresh
             if conf < threshold:
                 continue
 
@@ -325,8 +303,7 @@ def real_detect(model, image: np.ndarray, conf_thresh: float, debug: bool = Fals
                 "box":  [x1, y1, x2, y2],
             })
         except Exception:
-            continue
-
+            continue  # bỏ qua box lỗi, không crash toàn app
     return boxes
 
 
@@ -415,6 +392,7 @@ if page.startswith("📊"):
     st.title("📊 Giới thiệu & Khám phá Dữ liệu")
 
     with st.container():
+        # Hiển thị Tên đề tài riêng toàn chiều rộng để không bị cắt
         ten_de_tai = STUDENT_INFO["Tên đề tài"]
         st.markdown(f"""
         <div style="background:#161b27; border:1px solid #30363d; border-left:4px solid #f59e0b;
@@ -425,6 +403,7 @@ if page.startswith("📊"):
             </div>
         </div>
         """, unsafe_allow_html=True)
+        # 3 trường còn lại trong 3 cột
         other_info = {k: v for k, v in STUDENT_INFO.items() if k != "Tên đề tài"}
         cols = st.columns(len(other_info))
         for col, (k, v) in zip(cols, other_info.items()):
@@ -548,9 +527,6 @@ elif page.startswith("🔍"):
         st.markdown("### ⚙️ Cài đặt")
         conf_thresh = st.slider("Ngưỡng Confidence", 0.1, 0.9, 0.45, 0.05)
         show_labels = st.toggle("Hiện nhãn class", value=True)
-        # FIX: thêm toggle debug để xem raw detection
-        debug_mode  = st.toggle("🐛 Debug raw detections", value=False,
-                                help="Hiện tất cả box trước khi filter confidence")
 
     tab_upload, tab_webcam = st.tabs(["📤 Upload Ảnh / Video", "📷 Webcam"])
 
@@ -565,12 +541,13 @@ elif page.startswith("🔍"):
             is_video = uploaded.type.startswith("video")
 
             if not is_video:
+                # ── XỬ LÝ ẢNH ────────────────────────────────────────────────
                 pil_img   = Image.open(uploaded).convert("RGB")
                 img_array = np.array(pil_img)
 
                 with st.spinner("Đang phân tích..."):
                     t0    = time.time()
-                    boxes = real_detect(model, img_array, conf_thresh, debug=debug_mode) if model else mock_detect(img_array)
+                    boxes = real_detect(model, img_array, conf_thresh) if model else mock_detect(img_array)
                     elapsed = time.time() - t0
 
                 result_pil = draw_detections(img_array, boxes)
@@ -612,6 +589,7 @@ elif page.startswith("🔍"):
                     st.dataframe(df_boxes, use_container_width=True)
 
             else:
+                # ── XỬ LÝ VIDEO bằng imageio (không cần libGL / cv2) ─────────
                 st.markdown("#### 🎬 Phân tích Video")
 
                 try:
@@ -628,6 +606,7 @@ elif page.startswith("🔍"):
                 tmp_video = Path("/tmp/uploaded_video.mp4")
                 tmp_video.write_bytes(uploaded.read())
 
+                # Đọc metadata video để tính sample_step tự động
                 try:
                     import av as _av
                     _c = _av.open(str(tmp_video))
@@ -650,6 +629,7 @@ elif page.startswith("🔍"):
                     help="Phân bố đều toàn video. Streamlit Cloud nên giữ ≤ 80 frames."
                 )
 
+                # Tự động tính sample_step để lấy mẫu đều toàn video
                 if total_frames_in_video > 0 and total_frames_in_video > max_frames:
                     auto_step = max(1, total_frames_in_video // max_frames)
                 else:
@@ -665,6 +645,7 @@ elif page.startswith("🔍"):
                     try:
                         reader = iio.imiter(str(tmp_video), plugin="pyav")
                         for idx, frame in enumerate(reader):
+                            # Bỏ qua frame tối (intro/fade) — mean < 8
                             if frame.mean() < 8:
                                 continue
                             if idx % auto_step == 0:
@@ -699,6 +680,7 @@ elif page.startswith("🔍"):
                     elapsed_total = time.time() - t_start
                     progress_bar.empty()
                     status_text.empty()
+                    # Tính fps output: số frame / giây gốc tương ứng
                     output_fps = max(1, round(total / max(video_dur, 1)))
 
                     viol_count = sum(all_violations)
@@ -757,7 +739,6 @@ elif page.startswith("🔍"):
         <div class="alert-warning">
         💡 <b>Lưu ý:</b> Streamlit Cloud không hỗ trợ webcam real-time liên tục.
         Dùng <code>st.camera_input</code> để chụp từng frame.
-        Hãy đảm bảo <b>toàn bộ phần đầu</b> nằm trong khung hình để model detect chính xác.
         </div>
         """, unsafe_allow_html=True)
 
@@ -769,8 +750,7 @@ elif page.startswith("🔍"):
 
             with st.spinner("Đang phân tích..."):
                 t0    = time.time()
-                # FIX: truyền debug_mode vào real_detect cho webcam
-                boxes = real_detect(model, img_array, conf_thresh, debug=debug_mode) if model else mock_detect(img_array)
+                boxes = real_detect(model, img_array, conf_thresh) if model else mock_detect(img_array)
                 elapsed = time.time() - t0
 
             result_pil = draw_detections(img_array, boxes)
@@ -919,7 +899,7 @@ elif page.startswith("📈"):
         1. Tăng dữ liệu `person` hoặc dùng focal loss để cân bằng class
         2. Thêm `copy_paste=0.3` trong augmentation để tăng head recall
         3. Thử model lớn hơn (`yolov8s` / `yolov8m`) để cải thiện recall
-        4. Hạ conf threshold riêng cho `head` xuống 0.20 (đã áp dụng)
+        4. Hạ conf threshold riêng cho `head` xuống 0.25 (đã áp dụng)
         """)
 
     st.markdown("---")
