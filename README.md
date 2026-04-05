@@ -39,7 +39,7 @@ Mu_Bao_Ho/
 ├── Packages.txt        # System packages cho Streamlit Cloud
 ├── models/
 │   └── best.pt         # YOLOv8n trained weights (tự động download nếu thiếu)
-├──train.ipynb          # file train model
+├──Train.ipynb          # file train model
 └── README.md
 
 ```
