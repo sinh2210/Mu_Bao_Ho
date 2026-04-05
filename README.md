@@ -1,6 +1,6 @@
 # 🪖 Phát hiện Mũ Bảo hộ trong Công trường bằng YOLOv8
 
-Hệ thống phát hiện vi phạm an toàn lao động tự động từ ảnh và video, sử dụng mô hình **YOLOv8n**.
+Giúp phát hiện vi phạm an toàn lao động tự động từ ảnh và video, sử dụng mô hình **YOLOv8n**.
 
 🔗 **Web App:** [mubaoho.streamlit.app](https://mubaoho-rrxjabkbpgrtp5t8addomr.streamlit.app/)
 
@@ -8,7 +8,7 @@ Hệ thống phát hiện vi phạm an toàn lao động tự động từ ảnh
 
 ## Giới thiệu
 
-Hệ thống phát hiện theo thời gian thực các trường hợp người lao động **không đội mũ bảo hộ** tại công trường xây dựng. Thay vì chỉ phát hiện class, hệ thống kiểm tra quan hệ không gian (spatial overlap) giữa bounding box `head` và `helmet` để xác định vi phạm chính xác hơn.
+Bài toán giúp phát hiện theo thời gian thực các trường hợp người lao động **không đội mũ bảo hộ** tại công trường xây dựng. Thay vì chỉ phát hiện class, bài toán kiểm tra quan hệ không gian (spatial overlap) giữa bounding box `head` và `helmet` để xác định vi phạm chính xác hơn.
 
 **3 lớp phát hiện:**
 - `helmet` — mũ bảo hộ (tuân thủ)
@@ -39,7 +39,9 @@ Mu_Bao_Ho/
 ├── Packages.txt        # System packages cho Streamlit Cloud
 ├── models/
 │   └── best.pt         # YOLOv8n trained weights (tự động download nếu thiếu)
+├──train.ipynb          # file train model
 └── README.md
+
 ```
 
 ---
@@ -98,36 +100,3 @@ Mở trình duyệt tại `http://localhost:8501`
 Tổng: **43.186 bounding box** từ ~5.000 ảnh (trung bình ~8-9 box/ảnh).
 
 ---
-
-## Training
-
-```python
-from ultralytics import YOLO
-
-model = YOLO("yolov8n.pt")  # pretrained COCO
-model.train(
-    data="data.yaml",
-    epochs=50,
-    imgsz=640,
-    batch=16,
-    optimizer="SGD",
-    lr0=0.01,
-    mosaic=1.0,
-    fliplr=0.5,
-    hsv_s=0.7,
-    hsv_v=0.4,
-    scale=0.5,
-    translate=0.1,
-)
-```
-
----
-
-## Thông tin
-
-| | |
-|---|---|
-| Sinh viên | Đỗ Văn Sinh |
-| MSSV | 22T1020733 |
-| GVHD | Lê Quang Chiến |
-| Môn học | TIN4653 |
